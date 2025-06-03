@@ -1,0 +1,17 @@
+[project]
+name = "cyphal-device-library"
+version = "0.1.0"
+description = "Library to simplify Interaction with Cyphal Devices"
+readme = "README.md"
+authors = [
+    { name = "Lasse Fröhner", email = "lasse@starcopter.com" }
+]
+requires-python = ">=3.13"
+dependencies = []
+
+[project.scripts]
+cyphal = "cyphal_device_library:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
