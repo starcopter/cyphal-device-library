@@ -18,65 +18,50 @@ from typing import (
     Union,
 )
 
+import pycyphal.presentation
+import uavcan.primitive
+import uavcan.primitive.array
 import uavcan.register
-from pycyphal.application._node import Client
-from uavcan.primitive import Empty_1 as Empty
-from uavcan.primitive import String_1 as String
-from uavcan.primitive import Unstructured_1 as Unstructured
-from uavcan.primitive.array import Bit_1 as Bit
-from uavcan.primitive.array import Integer8_1 as Integer8
-from uavcan.primitive.array import Integer16_1 as Integer16
-from uavcan.primitive.array import Integer32_1 as Integer32
-from uavcan.primitive.array import Integer64_1 as Integer64
-from uavcan.primitive.array import Natural8_1 as Natural8
-from uavcan.primitive.array import Natural16_1 as Natural16
-from uavcan.primitive.array import Natural32_1 as Natural32
-from uavcan.primitive.array import Natural64_1 as Natural64
-from uavcan.primitive.array import Real16_1 as Real16
-from uavcan.primitive.array import Real32_1 as Real32
-from uavcan.primitive.array import Real64_1 as Real64
-from uavcan.register import Name_1 as Name
-from uavcan.register import Value_1 as Value
 
 _logger = logging.getLogger(__name__)
 ServiceClass = TypeVar("ServiceClass")
 
 RegisterValue = Union[
-    Empty,
-    String,
-    Unstructured,
-    Bit,
-    Integer64,
-    Integer32,
-    Integer16,
-    Integer8,
-    Natural64,
-    Natural32,
-    Natural16,
-    Natural8,
-    Real64,
-    Real32,
-    Real16,
+    uavcan.primitive.Empty_1,
+    uavcan.primitive.String_1,
+    uavcan.primitive.Unstructured_1,
+    uavcan.primitive.array.Bit_1,
+    uavcan.primitive.array.Integer64_1,
+    uavcan.primitive.array.Integer32_1,
+    uavcan.primitive.array.Integer16_1,
+    uavcan.primitive.array.Integer8_1,
+    uavcan.primitive.array.Natural64_1,
+    uavcan.primitive.array.Natural32_1,
+    uavcan.primitive.array.Natural16_1,
+    uavcan.primitive.array.Natural8_1,
+    uavcan.primitive.array.Real64_1,
+    uavcan.primitive.array.Real32_1,
+    uavcan.primitive.array.Real16_1,
 ]
 
 NativeValue = Union[None, float, int, bool, list[float], list[int], list[bool], bytes, str]
 
 RegisterType = Union[
     # Empty is not a permitted type
-    Type[String],
-    Type[Unstructured],
-    Type[Bit],
-    Type[Integer64],
-    Type[Integer32],
-    Type[Integer16],
-    Type[Integer8],
-    Type[Natural64],
-    Type[Natural32],
-    Type[Natural16],
-    Type[Natural8],
-    Type[Real64],
-    Type[Real32],
-    Type[Real16],
+    Type[uavcan.primitive.String_1],
+    Type[uavcan.primitive.Unstructured_1],
+    Type[uavcan.primitive.array.Bit_1],
+    Type[uavcan.primitive.array.Integer64_1],
+    Type[uavcan.primitive.array.Integer32_1],
+    Type[uavcan.primitive.array.Integer16_1],
+    Type[uavcan.primitive.array.Integer8_1],
+    Type[uavcan.primitive.array.Natural64_1],
+    Type[uavcan.primitive.array.Natural32_1],
+    Type[uavcan.primitive.array.Natural16_1],
+    Type[uavcan.primitive.array.Natural8_1],
+    Type[uavcan.primitive.array.Real64_1],
+    Type[uavcan.primitive.array.Real32_1],
+    Type[uavcan.primitive.array.Real16_1],
 ]
 
 
@@ -85,7 +70,9 @@ class Registry:
     REQUEST_ATTEMPTS = 3
 
     def __init__(
-        self, node_id: int | None, client_factory: Callable[[Type[ServiceClass], int], Client[ServiceClass]]
+        self,
+        node_id: int | None,
+        client_factory: Callable[[Type[ServiceClass], int], pycyphal.presentation.Client[ServiceClass]],
     ) -> None:
         self.node_id = node_id
         self._client_factory = client_factory
@@ -96,7 +83,9 @@ class Registry:
         if self.node_id is None:
             raise ValueError("set remote node ID first")
 
-    def _insert(self, name: Union[str, Name], response: uavcan.register.Access_1.Response) -> "Register":
+    def _insert(
+        self, name: Union[str, uavcan.register.Name_1], response: uavcan.register.Access_1.Response
+    ) -> "Register":
         basename = Register.get_basename(name)
         if basename not in self:
             self[basename] = Register(name, response, registry=self)
@@ -134,10 +123,10 @@ class Registry:
         for reg in self:
             _logger.debug("Node %i has a register %s", self.node_id, reg)
 
-    async def refresh_register(self, name: Union[Name, str, bytes]) -> None:
+    async def refresh_register(self, name: Union[uavcan.register.Name_1, str, bytes]) -> None:
         self._check_node_id()
-        if not isinstance(name, Name):
-            name = Name(name)
+        if not isinstance(name, uavcan.register.Name_1):
+            name = uavcan.register.Name_1(name)
         command = uavcan.register.Access_1.Request(name)
         async with self.access_client() as client:
             for _attempt in range(self.REQUEST_ATTEMPTS):
@@ -176,7 +165,9 @@ class Registry:
         self._check_key(key)
         del self._registers[key]
 
-    async def _yield_client(self, dtype: Type[ServiceClass]) -> AsyncIterator[Client[ServiceClass]]:
+    async def _yield_client(
+        self, dtype: Type[ServiceClass]
+    ) -> AsyncIterator[pycyphal.presentation.Client[ServiceClass]]:
         self._check_node_id()
         async with self._client_locks[dtype]:
             client = self._client_factory(dtype, self.node_id)
@@ -186,10 +177,10 @@ class Registry:
             finally:
                 client.close()
 
-    def list_client(self) -> AsyncContextManager[Client[uavcan.register.List_1]]:
+    def list_client(self) -> AsyncContextManager[pycyphal.presentation.Client[uavcan.register.List_1]]:
         return contextlib.asynccontextmanager(self._yield_client)(uavcan.register.List_1)
 
-    def access_client(self) -> AsyncContextManager[Client[uavcan.register.Access_1]]:
+    def access_client(self) -> AsyncContextManager[pycyphal.presentation.Client[uavcan.register.Access_1]]:
         return contextlib.asynccontextmanager(self._yield_client)(uavcan.register.Access_1)
 
     async def set_value(self, name: str, value: NativeValue) -> bool:
@@ -200,7 +191,7 @@ class Registry:
             raise TypeError(f"{name} is immutable and thus may not be written to")
         value = reg.proxy.normalize(value)
         _logger.debug("Node %i: setting %s to %r...", self.node_id, name, value)
-        request = uavcan.register.Access_1.Request(Name(name), reg.proxy.to_uavcan_value(value))
+        request = uavcan.register.Access_1.Request(uavcan.register.Name_1(name), reg.proxy.to_uavcan_value(value))
         async with self.access_client() as client:
             for _attempt in range(self.REQUEST_ATTEMPTS):
                 result = await client.call(request)
@@ -222,7 +213,9 @@ class Registry:
 
 
 class Register:
-    def __init__(self, name: Union[str, Name], info: uavcan.register.Access_1.Response, registry: Registry) -> None:
+    def __init__(
+        self, name: Union[str, uavcan.register.Name_1], info: uavcan.register.Access_1.Response, registry: Registry
+    ) -> None:
         self._value = uavcan.register.Access_1.Response()
         self._min = uavcan.register.Access_1.Response()
         self._max = uavcan.register.Access_1.Response()
@@ -237,7 +230,7 @@ class Register:
 
         self._update(name, info)
 
-    def _update(self, name: Union[str, Name], response: uavcan.register.Access_1.Response) -> None:
+    def _update(self, name: Union[str, uavcan.register.Name_1], response: uavcan.register.Access_1.Response) -> None:
         name = self._parse_name(name)
         assert name.rstrip("<=>") == self.name
         if not repr(self.proxy.to_uavcan_value(self.proxy.to_native(response.value))) == repr(response.value):
@@ -271,15 +264,15 @@ class Register:
             setattr(self, attr, response)
 
     @staticmethod
-    def _parse_name(name: Union[str, Name]) -> str:
+    def _parse_name(name: Union[str, uavcan.register.Name_1]) -> str:
         if isinstance(name, str):
             return name
-        if isinstance(name, Name):
+        if isinstance(name, uavcan.register.Name_1):
             return name.name.tobytes().decode("utf8", errors="replace")
         raise TypeError(f"name: expected str or uavcan.register.Name_1, got {type(name).__name__}")
 
     @staticmethod
-    def get_basename(name: Union[str, Name]) -> str:
+    def get_basename(name: Union[str, uavcan.register.Name_1]) -> str:
         str_name = Register._parse_name(name)
         if not re.match(r"^([a-z]|_[0-9a-z])(_?[0-9a-z])*(\.(_?[0-9a-z])+)+_?[<=>]?$", str_name):
             _logger.warning("register '%s' violates naming conventions", str_name)
@@ -290,7 +283,7 @@ class Register:
         return self._name
 
     @name.setter
-    def name(self, name: Union[str, Name]) -> None:
+    def name(self, name: Union[str, uavcan.register.Name_1]) -> None:
         self._name = self.get_basename(name)
 
     @property
@@ -382,32 +375,36 @@ class TypeProxy:
     """
 
     ACCESSORS = {
-        String: "string",
-        Unstructured: "unstructured",
-        Bit: "bit",
-        Integer64: "integer64",
-        Integer32: "integer32",
-        Integer16: "integer16",
-        Integer8: "integer8",
-        Natural64: "natural64",
-        Natural32: "natural32",
-        Natural16: "natural16",
-        Natural8: "natural8",
-        Real64: "real64",
-        Real32: "real32",
-        Real16: "real16",
+        uavcan.primitive.String_1: "string",
+        uavcan.primitive.Unstructured_1: "unstructured",
+        uavcan.primitive.array.Bit_1: "bit",
+        uavcan.primitive.array.Integer64_1: "integer64",
+        uavcan.primitive.array.Integer32_1: "integer32",
+        uavcan.primitive.array.Integer16_1: "integer16",
+        uavcan.primitive.array.Integer8_1: "integer8",
+        uavcan.primitive.array.Natural64_1: "natural64",
+        uavcan.primitive.array.Natural32_1: "natural32",
+        uavcan.primitive.array.Natural16_1: "natural16",
+        uavcan.primitive.array.Natural8_1: "natural8",
+        uavcan.primitive.array.Real64_1: "real64",
+        uavcan.primitive.array.Real32_1: "real32",
+        uavcan.primitive.array.Real16_1: "real16",
     }
 
-    def __init__(self, value: Value) -> None:
+    def __init__(self, value: uavcan.register.Value_1) -> None:
         self.register_type = self._get_register_type(value)
         self.length = None
         native = self.to_native(value, unpack=False)
-        if self.register_type not in (Empty, String, Unstructured):
+        if self.register_type not in (
+            uavcan.primitive.Empty_1,
+            uavcan.primitive.String_1,
+            uavcan.primitive.Unstructured_1,
+        ):
             assert isinstance(native, list)
             self.length = len(native)
 
     @staticmethod
-    def _get_register_type(value: Value) -> RegisterType:
+    def _get_register_type(value: uavcan.register.Value_1) -> RegisterType:
         if value.string is not None:
             return type(value.string)
         if value.unstructured is not None:
@@ -438,32 +435,32 @@ class TypeProxy:
             return type(value.real16)
         raise TypeError(f"Incompatible register type: {value}")
 
-    def to_native(self, value: Union[Value, RegisterValue, None], unpack: bool = True) -> NativeValue:
-        if isinstance(value, Value):
+    def to_native(self, value: Union[uavcan.register.Value_1, RegisterValue, None], unpack: bool = True) -> NativeValue:
+        if isinstance(value, uavcan.register.Value_1):
             attr = self.ACCESSORS[self.register_type]
             value = getattr(value, attr)
 
-        if value is None or isinstance(value, Empty):
+        if value is None or isinstance(value, uavcan.primitive.Empty_1):
             return None
-        if isinstance(value, String):
+        if isinstance(value, uavcan.primitive.String_1):
             return value.value.tobytes().split(b"\0", 1)[0].decode("utf8", errors="replace")
-        if isinstance(value, Unstructured):
+        if isinstance(value, uavcan.primitive.Unstructured_1):
             return value.value.tobytes()
         if isinstance(
             value,
             (
-                Bit,
-                Integer64,
-                Integer32,
-                Integer16,
-                Integer8,
-                Natural64,
-                Natural32,
-                Natural16,
-                Natural8,
-                Real64,
-                Real32,
-                Real16,
+                uavcan.primitive.array.Bit_1,
+                uavcan.primitive.array.Integer64_1,
+                uavcan.primitive.array.Integer32_1,
+                uavcan.primitive.array.Integer16_1,
+                uavcan.primitive.array.Integer8_1,
+                uavcan.primitive.array.Natural64_1,
+                uavcan.primitive.array.Natural32_1,
+                uavcan.primitive.array.Natural16_1,
+                uavcan.primitive.array.Natural8_1,
+                uavcan.primitive.array.Real64_1,
+                uavcan.primitive.array.Real32_1,
+                uavcan.primitive.array.Real16_1,
             ),
         ):
             value_list = value.value.tolist()
@@ -477,8 +474,12 @@ class TypeProxy:
 
     def to_uavcan_data_type(self, value: NativeValue) -> RegisterValue:
         if value is None:
-            return Empty()
-        if self.register_type not in (Empty, String, Unstructured):
+            return uavcan.primitive.Empty_1()
+        if self.register_type not in (
+            uavcan.primitive.Empty_1,
+            uavcan.primitive.String_1,
+            uavcan.primitive.Unstructured_1,
+        ):
             if not isinstance(value, list):
                 value = [value]
             assert isinstance(value, list)
@@ -486,11 +487,11 @@ class TypeProxy:
                 raise ValueError(f"length mismatch: expected {self.length}, got {len(value)}")
         return self.register_type(value)
 
-    def to_uavcan_value(self, value: NativeValue) -> Value:
+    def to_uavcan_value(self, value: NativeValue) -> uavcan.register.Value_1:
         if value is None:
-            return Value()
+            return uavcan.register.Value_1()
         attr = self.ACCESSORS[self.register_type]
-        return Value(**{attr: self.to_uavcan_data_type(value)})
+        return uavcan.register.Value_1(**{attr: self.to_uavcan_data_type(value)})
 
     def normalize(self, value: NativeValue) -> NativeValue:
         return self.to_native(self.to_uavcan_data_type(value))
@@ -498,6 +499,10 @@ class TypeProxy:
     @property
     def type_str(self) -> str:
         type_str = self.ACCESSORS[self.register_type]
-        if self.register_type not in (Empty, String, Unstructured):
+        if self.register_type not in (
+            uavcan.primitive.Empty_1,
+            uavcan.primitive.String_1,
+            uavcan.primitive.Unstructured_1,
+        ):
             type_str += f"[{self.length}]"
         return type_str
