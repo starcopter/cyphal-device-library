@@ -37,8 +37,3 @@ def configure_logging(console: rich.console.Console | None = None, filename: Pat
 
 async def async_prompt(prompt: rich.prompt.PromptBase[T], default: T = ...) -> T:
     return await asyncio.get_event_loop().run_in_executor(None, partial(prompt, default=default))
-
-
-if __name__ == "__main__":
-    configure_logging()
-    # download_and_install_standard_uavcan_namespace()

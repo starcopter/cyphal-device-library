@@ -1,0 +1,13 @@
+# Loosely inspired by https://forum.opencyphal.org/t/central-repository-of-dsdl-namespaces/1817
+
+[public_regulated_data_types]
+zip = "https://github.com/OpenCyphal/public_regulated_data_types/archive/refs/heads/master.zip"
+namespaces = ["uavcan", "reg"]
+
+[starcopter]
+zip = "https://github.com/starcopter/starcopter-dsdl/archive/refs/heads/main.zip"
+namespaces = ["starcopter"]
+
+[Zubax]
+zip = "https://github.com/Zubax/zubax_dsdl/archive/refs/heads/master.zip"
+namespaces = ["zubax"]
