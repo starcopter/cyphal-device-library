@@ -1,7 +1,7 @@
 # ruff: noqa: E402
 import os
 
-from .util import download_and_compile_dsdl
+from .util.dsdl import download_and_compile_dsdl
 
 os.environ.setdefault("PYCYPHAL_NO_IMPORT_HOOK", "1")
 download_and_compile_dsdl()

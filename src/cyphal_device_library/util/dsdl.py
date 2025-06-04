@@ -1,24 +1,18 @@
-import asyncio
 import io
 import itertools
 import logging
-import os
 import shutil
+import site
 import sys
 import tempfile
 import urllib.request
 import zipfile
 from dataclasses import dataclass
-from functools import partial
 from pathlib import Path
-from typing import TypeVar
 
 import pycyphal.dsdl
-import rich.console
-import rich.prompt
 
 logger = logging.getLogger(__name__)
-T = TypeVar("T")
 
 
 @dataclass
@@ -64,26 +58,25 @@ ZUBAX_DSDL = DSDLRepository(
 )
 
 
-def get_venv_path() -> Path:
-    def _find_upwards(path: str | Path, dirname: str = ".venv") -> Path | None:
-        path = Path(path)
-        while path != path.root:
-            if path.name == dirname and path.is_dir():
-                return path
-            path = path.parent
-        return None
+def get_dsdl_path() -> Path:
+    for path in map(Path, site.getsitepackages()):
+        try:
+            test_file = path / ".write_test"
+            test_file.touch()
+            test_file.unlink()
+            return path
+        except (OSError, PermissionError):
+            logger.debug("Skipping %s because it is not writable", path)
+            continue
 
-    def _find_first_dir(paths: list[str | Path], dirname: str = ".venv") -> Path | None:
-        for path in map(Path, paths):
-            if path.name == dirname and path.is_dir():
-                return path
-        return None
+    # use user site-packages instead
+    # https://docs.python.org/3/library/site.html#module-usercustomize
+    dsdl_path = Path(site.getusersitepackages())
 
-    venv = os.environ.get("VIRTUAL_ENV") or _find_upwards(sys.executable) or _find_first_dir(sys.path)
-    if not venv:
-        raise RuntimeError("Virtual environment not found")
+    if dsdl_path.resolve() not in [Path(p).resolve() for p in sys.path]:
+        sys.path.append(str(dsdl_path))
 
-    return Path(venv)
+    return dsdl_path
 
 
 def download_and_compile_dsdl(
@@ -93,7 +86,8 @@ def download_and_compile_dsdl(
 ) -> None:
     """Download Cyphal DSDL repositories and compile the DSDL files."""
     if output_directory is None:
-        output_directory = get_venv_path()
+        output_directory = get_dsdl_path()
+        logger.debug("Using %s as output directory", output_directory)
     output_directory = Path(output_directory).resolve()
 
     if not force and all(
@@ -110,6 +104,7 @@ def download_and_compile_dsdl(
                 repo.download(dsdl_root)
 
             flat_namespaces = list(itertools.chain.from_iterable(repo.namespaces for repo in repositories))
+            logger.info("Installing namespaces %s to %s", flat_namespaces, output_directory)
             pycyphal.dsdl.compile_all(
                 [dsdl_root / namespace for namespace in flat_namespaces],
                 output_directory,
@@ -119,34 +114,8 @@ def download_and_compile_dsdl(
         sys.path.append(str(output_directory))
 
 
-def configure_logging(console: rich.console.Console | None = None, filename: Path | str | None = None):
-    from rich.logging import RichHandler
-
-    root_logger = logging.getLogger()
-    root_logger.setLevel("DEBUG")
-    logging.getLogger("pycyphal").setLevel("INFO")
-    logging.getLogger("pydsdl").setLevel("INFO")
-    logging.getLogger("nunavut").setLevel("INFO")
-
-    rich_handler = RichHandler(console=console, rich_tracebacks=True, tracebacks_show_locals=True, show_path=False)
-    rich_handler.setFormatter(logging.Formatter("%(name)-20s %(message)s", datefmt="[%X]"))
-    root_logger.addHandler(rich_handler)
-
-    if filename:
-        file_handler = logging.FileHandler(filename)
-        file_handler.setFormatter(
-            logging.Formatter(
-                "%(asctime)s.%(msecs)03d %(name)-30s %(levelname)-8s: %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S",
-            )
-        )
-        root_logger.addHandler(file_handler)
-
-
-async def async_prompt(prompt: rich.prompt.PromptBase[T], default: T = ...) -> T:
-    return await asyncio.get_event_loop().run_in_executor(None, partial(prompt, default=default))
-
-
 if __name__ == "__main__":
+    from . import configure_logging
+
     configure_logging()
-    # download_and_install_standard_uavcan_namespace()
+    download_and_compile_dsdl()
