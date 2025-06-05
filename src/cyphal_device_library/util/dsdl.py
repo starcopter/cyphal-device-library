@@ -22,10 +22,10 @@ class DSDLRepository:
 
     def download(self, output_directory: Path, force: bool = False) -> None:
         if not force and all((output_directory / namespace).is_dir() for namespace in self.namespaces):
-            logger.debug("Repository %s already downloaded, skipping", self.zip_url)
+            logger.info("Repository %s already downloaded, skipping", self.zip_url)
             return
 
-        logger.debug("Downloading repository %s to %s", self.zip_url, output_directory)
+        logger.info("Downloading repository %s...", self.zip_url)
         with urllib.request.urlopen(self.zip_url) as response:
             zip_data = io.BytesIO(response.read())
 
@@ -43,7 +43,12 @@ class DSDLRepository:
             output_directory.mkdir(parents=True, exist_ok=True)
 
             for namespace in self.namespaces:
-                shutil.move(repo_path / namespace, output_directory / namespace)
+                src = repo_path / namespace
+                dest = output_directory / namespace
+                if dest.exists():
+                    shutil.rmtree(dest)
+                shutil.move(src, dest)
+                logger.info("Extracted namespace '%s' to %s", namespace, dest)
 
 
 def get_repositories() -> list[DSDLRepository]:
@@ -114,7 +119,7 @@ def download_and_compile_dsdl_repositories(
         for repo in repositories
         for namespace in repo.namespaces
     ):
-        logger.debug("All namespaces already exist, skipping")
+        logger.info("All namespaces already exist, skipping")
     else:
         dsdl_root = get_default_dsdl_dir()
         download_dsdl_repositories(repositories, dsdl_directory=dsdl_root, force=force)
