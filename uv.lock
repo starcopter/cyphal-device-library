@@ -103,7 +103,7 @@ dev = [
 requires-dist = [
     { name = "pycyphal", extras = ["transport-can-pythoncan"], specifier = ">=1.23.0" },
     { name = "python-can-usbtingo", specifier = ">=1.0.2" },
-    { name = "rich", specifier = ">=14.0.0" },
+    { name = "rich", specifier = ">=13.0.0" },
     { name = "typer", specifier = ">=0.16.0" },
 ]
 
