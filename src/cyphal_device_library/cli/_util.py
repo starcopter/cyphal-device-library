@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+from enum import IntEnum
 
 from rich.console import Console
 from rich.logging import RichHandler
@@ -87,6 +88,20 @@ def parse_int_set(text: str) -> set[int]:
     assert isinstance(result, set)
     _logger.debug("Int set %r parsed as %r", text, result)
     return result
+
+
+class Mode(IntEnum):
+    OPERATIONAL = 0
+    INITIALIZATION = 1
+    MAINTENANCE = 2
+    SOFTWARE_UPDATE = 3
+
+
+class Health(IntEnum):
+    NOMINAL = 0
+    ADVISORY = 1
+    CAUTION = 2
+    WARNING = 3
 
 
 def set_default_usbtingo_env_vars() -> None:

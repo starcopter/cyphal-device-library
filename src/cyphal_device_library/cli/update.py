@@ -26,7 +26,8 @@ from rich.prompt import Confirm
 
 from ..client import Client
 from ..util import async_prompt
-from ._util import parse_int_set, set_default_usbtingo_env_vars
+from ._util import parse_int_set
+from .discover import format_node_table
 
 logger = logging.getLogger(__name__ if __name__ != "__main__" else Path(__file__).name)
 app = typer.Typer()
@@ -266,7 +267,6 @@ def update(
     """Update a specified set of nodes with a specific software file."""
 
     node_set = set(range(126)) if nodes == "all" else parse_int_set(nodes)
-    set_default_usbtingo_env_vars()
 
     try:
         asyncio.run(
@@ -299,6 +299,8 @@ async def async_update_single(node_ids: set[int], file: Path, parallel_updates: 
             return
 
         logger.info("Updating %d nodes: %s", len(nodes_to_update), nodes_to_update)
+
+        table = format_node_table({node_id: node_registry[node_id] for node_id in nodes_to_update})
 
         columns = "ID", "Name", "HW", "SW", "Git Hash", "CRC", "Mode", "Health"
         table = rich.table.Table(
@@ -359,8 +361,6 @@ def update_all(
     force: bool = typer.Option(False, "--force", "-f", help="Force update even if the software is up to date."),
 ) -> None:
     """Update all nodes with the latest software."""
-
-    set_default_usbtingo_env_vars()
 
     try:
         asyncio.run(
