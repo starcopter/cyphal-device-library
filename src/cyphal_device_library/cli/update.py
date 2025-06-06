@@ -1,10 +1,19 @@
+"""
+Software update CLI for Cyphal devices.
+
+THIS FILE IS A QUICK AND DIRTY IMPLEMENTATION.
+While core functionality is there, there is also a lot of duplicate code.
+
+Use at your own risk.
+"""
+
 import asyncio
 import logging
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import pycyphal
 import rich.console
@@ -17,6 +26,7 @@ from rich.prompt import Confirm
 
 from ..client import Client
 from ..util import async_prompt
+from ._util import parse_int_set, set_default_usbtingo_env_vars
 
 logger = logging.getLogger(__name__ if __name__ != "__main__" else Path(__file__).name)
 app = typer.Typer()
@@ -26,13 +36,17 @@ def _padded(table: rich.table.Table) -> rich.padding.Padding:
     return rich.padding.Padding(table, (1, 0))
 
 
+def get_default_parallel_updates(iface: str = os.environ.get("UAVCAN__CAN__IFACE", "")) -> int:
+    return 12 if "socketcan" in iface else 1
+
+
 @dataclass
 class SoftwareFile:
     """Entry representing an available Software for Update."""
 
     _filename_pattern = re.compile(
         r"""^
-            (?P<name>[a-zA-Z0-9.]+)       # Node name (e.g., com.zubax.telega)
+            (?P<name>[a-zA-Z0-9.\-_]+)    # Node name (e.g., com.zubax.telega)
             -
             (?P<hw_version>\d+\.\d+)      # Hardware version (required)
             -
@@ -162,13 +176,23 @@ HEALTH_NAMES = {
 }
 
 
-async def update_all_nodes(client: Client, software_files: SoftwareDirectory, console: rich.console.Console) -> None:
+async def update_all_nodes(
+    client: Client,
+    software_files: SoftwareDirectory,
+    console: rich.console.Console,
+    timeout: float = 10,
+    force: bool = False,
+) -> None:
     nodes = {node_id: node for node_id, node in client.node_tracker.registry.items() if node.info is not None}
     updates = {
         node_id: file
         for node_id, node in nodes.items()
-        if (file := software_files.get_update_for(node, force=True)) is not None
+        if (file := software_files.get_update_for(node, force=force)) is not None
     }
+
+    if not updates:
+        logger.info("No nodes to update")
+        return
 
     columns = "ID", "Name", "HW", "SW", "Git Hash", "CRC", "Mode", "Health"
     interface_name = os.environ.get("UAVCAN__CAN__IFACE")
@@ -210,7 +234,7 @@ async def update_all_nodes(client: Client, software_files: SoftwareDirectory, co
 
     console.print("")
 
-    update_tasks = [client.update(node_id, file.file, timeout=300) for node_id, file in updates.items()]
+    update_tasks = [client.update(node_id, file.file, timeout=timeout) for node_id, file in updates.items()]
     results = await asyncio.gather(*update_tasks, return_exceptions=True)
 
     table = rich.table.Table("ID", "Status", title="Update Status")
@@ -227,7 +251,135 @@ async def update_all_nodes(client: Client, software_files: SoftwareDirectory, co
     console.print(_padded(table))
 
 
-async def main(parallel_updates: int = 1, software_path: str | Path = "bin"):
+@app.command()
+def update(
+    nodes: Annotated[
+        str,
+        typer.Argument(help="Set of Node IDs (e.g. '1,3,10-20,!13'), or 'all' to update all available nodes"),
+    ],
+    file: Annotated[Path, typer.Argument(exists=True, help="Path to software file (*.bin)", dir_okay=False)],
+    parallel_updates: Annotated[
+        int | None, typer.Option(..., "--parallel", "-n", help="Number of parallel updates.")
+    ] = None,
+    timeout: Annotated[float, typer.Option(..., "--timeout", "-t", help="Timeout for each update in seconds.")] = 10,
+) -> None:
+    """Update a specified set of nodes with a specific software file."""
+
+    node_set = set(range(126)) if nodes == "all" else parse_int_set(nodes)
+    set_default_usbtingo_env_vars()
+
+    try:
+        asyncio.run(
+            async_update_single(node_set, file, parallel_updates or get_default_parallel_updates(), timeout=timeout)
+        )
+    except KeyboardInterrupt:
+        typer.echo("Cancelled by user, exiting.")
+    except (pycyphal.presentation.PortClosedError, asyncio.InvalidStateError):
+        pass
+
+
+async def async_update_single(node_ids: set[int], file: Path, parallel_updates: int, timeout: float = 300) -> None:
+    console = rich.console.Console()
+
+    with Client("com.starcopter.update-server", parallel_updates=parallel_updates) as client:
+        await asyncio.sleep(2)
+
+        node_registry = client.node_tracker.registry
+
+        available_nodes = set(node_registry.keys())
+        nodes_to_update = node_ids & available_nodes
+        nodes_to_skip = available_nodes - nodes_to_update
+
+        if nodes_to_skip:
+            logger.info("Skipping %d nodes: %s", len(nodes_to_skip), nodes_to_skip)
+
+        if not nodes_to_update:
+            logger.info("No nodes to update")
+            await asyncio.sleep(0.1)
+            return
+
+        logger.info("Updating %d nodes: %s", len(nodes_to_update), nodes_to_update)
+
+        columns = "ID", "Name", "HW", "SW", "Git Hash", "CRC", "Mode", "Health"
+        table = rich.table.Table(
+            *columns,
+            title="Pending Software Updates",
+            caption=f"Nodes to update to {file.name}",
+        )
+        for node_id in nodes_to_update:
+            heartbeat, info = node_registry[node_id]
+            node_hw_version = f"{info.hardware_version.major}.{info.hardware_version.minor}"
+            node_sw_version = f"{info.software_version.major}.{info.software_version.minor}"
+            node_vcs = f"{info.software_vcs_revision_id:08x}" if info.software_vcs_revision_id else ""
+            node_crc = f"{info.software_image_crc[0]:08x}" if info.software_image_crc.size > 0 else ""
+            node_mode = heartbeat.mode.value
+            node_health = heartbeat.health.value
+
+            table.add_row(
+                str(node_id),
+                info.name.tobytes().decode(),
+                node_hw_version,
+                node_sw_version,
+                node_vcs,
+                node_crc,
+                MODE_NAMES[node_mode],
+                HEALTH_NAMES[node_health],
+            )
+
+        console.print(_padded(table))
+
+        if not await async_prompt(Confirm("Continue with update?", console=console)):
+            logger.info("Update cancelled by user, exiting.")
+            return
+
+        console.print("")
+
+        update_tasks = [client.update(node_id, file, timeout=timeout) for node_id in nodes_to_update]
+        results = await asyncio.gather(*update_tasks, return_exceptions=True)
+
+        table = rich.table.Table("ID", "Status", title="Update Status")
+
+        for node_id, result in zip(nodes_to_update, results):
+            if isinstance(result, Exception):
+                status = f"✘ failed to update: {result}"
+            else:
+                assert isinstance(result, float), f"Expected float, got {type(result)}"
+                status = f"✔ successfully updated to {file.name} in {result:.2f}s"
+
+        table.add_row(str(node_id), status)
+
+        console.print(_padded(table))
+
+
+@app.command()
+def update_all(
+    parallel_updates: int | None = typer.Option(None, "--parallel", "-n", help="Number of parallel updates"),
+    software_path: Path = typer.Option(Path("bin"), "--path", "-p", help="Path to software files"),
+    timeout: float = typer.Option(10, "--timeout", "-t", help="Timeout for each update in seconds."),
+    force: bool = typer.Option(False, "--force", "-f", help="Force update even if the software is up to date."),
+) -> None:
+    """Update all nodes with the latest software."""
+
+    set_default_usbtingo_env_vars()
+
+    try:
+        asyncio.run(
+            async_update_all(
+                parallel_updates or get_default_parallel_updates(),
+                software_path,
+                timeout=timeout,
+                force=force,
+            )
+        )
+    except KeyboardInterrupt:
+        typer.echo("Cancelled by user, exiting.")
+    except (pycyphal.presentation.PortClosedError, asyncio.InvalidStateError):
+        pass
+
+
+async def async_update_all(
+    parallel_updates: int = 1, software_path: str | Path = "bin", timeout: float = 10, force: bool = False
+):
     console = rich.console.Console()
 
     software_files = SoftwareDirectory.from_path(software_path)
@@ -236,29 +388,6 @@ async def main(parallel_updates: int = 1, software_path: str | Path = "bin"):
     with Client("com.starcopter.update-server", parallel_updates=parallel_updates) as client:
         await asyncio.sleep(3)
 
-        await update_all_nodes(client, software_files, console)
+        await update_all_nodes(client, software_files, console, timeout=timeout, force=force)
 
         await asyncio.sleep(0.1)
-
-
-@app.command()
-def update(
-    parallel_updates: int | None = typer.Option(None, "--parallel", "-n", help="Number of parallel updates"),
-    software_path: Path = typer.Option(Path("bin"), "--path", "-p", help="Path to software files"),
-) -> None:
-    """Update all nodes with the latest software."""
-
-    os.environ.setdefault("UAVCAN__NODE__ID", "126")
-    os.environ.setdefault("UAVCAN__CAN__IFACE", "usbtingo:")
-    os.environ.setdefault("UAVCAN__CAN__MTU", "64")
-    os.environ.setdefault("UAVCAN__CAN__BITRATE", "1000000 5000000")
-
-    if parallel_updates is None:
-        parallel_updates = 12 if "socketcan" in os.environ.get("UAVCAN__CAN__IFACE", "") else 1
-
-    try:
-        asyncio.run(main(parallel_updates, software_path))
-    except KeyboardInterrupt:
-        typer.echo("Cancelled by user, exiting.")
-    except (pycyphal.presentation.PortClosedError, asyncio.InvalidStateError):
-        pass

@@ -6,7 +6,7 @@ from . import dsdl, update
 from ._util import configure_logging
 
 app = typer.Typer()
-app.add_typer(dsdl.app, name="dsdl")
+app.add_typer(dsdl.app)
 app.add_typer(update.app)
 
 

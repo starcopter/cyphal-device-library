@@ -337,10 +337,22 @@ class Client:
             t_response = loop.time()
 
             if response.status != uavcan.node.ExecuteCommand_1.Response.STATUS_SUCCESS:
+                status_enum = {
+                    uavcan.node.ExecuteCommand_1.Response.STATUS_SUCCESS: "SUCCESS",
+                    uavcan.node.ExecuteCommand_1.Response.STATUS_FAILURE: "FAILURE",
+                    uavcan.node.ExecuteCommand_1.Response.STATUS_NOT_AUTHORIZED: "NOT AUTHORIZED",
+                    uavcan.node.ExecuteCommand_1.Response.STATUS_BAD_COMMAND: "BAD COMMAND",
+                    uavcan.node.ExecuteCommand_1.Response.STATUS_BAD_PARAMETER: "BAD PARAMETER",
+                    uavcan.node.ExecuteCommand_1.Response.STATUS_BAD_STATE: "BAD STATE",
+                    uavcan.node.ExecuteCommand_1.Response.STATUS_INTERNAL_ERROR: "INTERNAL ERROR",
+                }.get(response.status, "unknown")
                 self.logger.error(
-                    "Software update request failed in %.1f s with status %i", t_response - t_start, response.status
+                    "Software update request failed in %.1f s with status %i: %s",
+                    t_response - t_start,
+                    response.status,
+                    status_enum,
                 )
-                raise RuntimeError(f"Software update request to node {node_id} failed: {response}")
+                raise RuntimeError(f"Software update request to node {node_id} failed: {status_enum}")
 
             self.logger.info("Node %i responded to update request in %i ms", node_id, 1000 * (t_response - t_start))
 
