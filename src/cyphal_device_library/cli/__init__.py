@@ -1,6 +1,7 @@
 from typing import Annotated
 
 import typer
+from dotenv import load_dotenv
 
 from . import dsdl
 from ._util import configure_logging, set_default_usbtingo_env_vars
@@ -20,6 +21,9 @@ except ImportError:
 @app.callback()
 def main(
     verbosity: Annotated[int, typer.Option("--verbose", "-v", count=True)] = 0,
+    reload: Annotated[bool, typer.Option("--reload", "-r", help="Reload environment from .env file")] = False,
 ):
+    if reload:
+        load_dotenv(override=True)
     configure_logging(verbosity)
     set_default_usbtingo_env_vars()
