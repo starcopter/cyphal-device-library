@@ -12,7 +12,6 @@ import uavcan.node
 import uavcan.primitive
 import uavcan.primitive.array
 import uavcan.register
-from pycyphal.application.node_tracker import Entry
 
 from .client import Client
 from .registry import NativeValue, Registry
@@ -28,10 +27,11 @@ class Device:
 
         self.dut = dut
         self._initialized = asyncio.Event()
+        self._info: uavcan.node.GetInfo_1.Response | None = None
 
         async def initialize():
             async with asyncio.TaskGroup() as tg:
-                tg.create_task(self.wait_for_info())
+                tg.create_task(self.get_info())
                 if isinstance(discover_registers, list):
                     for name in discover_registers:
                         tg.create_task(self.registry.refresh_register(name, full=True))
@@ -65,8 +65,8 @@ class Device:
     @property
     def info(self) -> uavcan.node.GetInfo_1.Response | None:
         """Node info, gathered from the node tracker."""
-        _, info = self.client.node_tracker.registry.get(self.dut, (None, None))
-        return info
+        _, node_tracker_info = self.client.node_tracker.registry.get(self.dut, (None, None))
+        return node_tracker_info or self._info
 
     @property
     def heartbeat(self) -> uavcan.node.Heartbeat_1 | None:
@@ -83,34 +83,20 @@ class Device:
             # no heartbeat yet
             return 0
 
-    async def wait_for_info(self) -> pycyphal.application.NodeInfo:
+    async def get_info(self, refresh: bool = False) -> pycyphal.application.NodeInfo:
         """Wait for the node info of the device under test to be available."""
-        update = asyncio.Event()
-
-        def _notify(node_id: int, old_entry: Entry | None, new_entry: Entry | None) -> None:
-            if node_id == self.dut and new_entry is not None and new_entry.info is not None:
-                update.set()
-
-        while not self.info:
-            update.clear()
-            self.client.node_tracker.add_update_handler(_notify)
-
-            try:
-                await update.wait()
-            finally:
-                self.client.node_tracker.remove_update_handler(_notify)
-
-        assert isinstance(self.info, uavcan.node.GetInfo_1.Response)
-        return self.info
+        if refresh or self._info is None:
+            self._info = await self.client.get_info(self.dut)
+        return self._info
 
     async def get_app_name(self) -> str:
         """Get the application name of the device under test."""
-        info = await self.wait_for_info()
+        info = await self.get_info()
         return info.name.tobytes().decode()
 
     async def get_device_uid(self) -> str:
         """Get the unique ID of the device under test."""
-        info = await self.wait_for_info()
+        info = await self.get_info()
         return info.unique_id.tobytes().hex()
 
     async def execute(self, command: uavcan.node.ExecuteCommand_1.Request) -> uavcan.node.ExecuteCommand_1.Response:
