@@ -195,15 +195,32 @@ class Registry:
         for reg in self:
             _logger.debug("Node %i has a register %s", self.node_id, reg)
 
-    async def refresh_register(self, name: Union[uavcan.register.Name_1, str, bytes]) -> None:
+    async def refresh_register(self, name: Union[uavcan.register.Name_1, str, bytes], full: bool = False) -> bool:
         """Refresh a single register's value and metadata from the remote node.
 
         Args:
             name: The name of the register to refresh. Can be a string, bytes, or UAVCAN Name type.
+            full: If True, refresh all metadata (min/max/default values) as well as the value.
+                If False, only refresh the value.
+
+        Returns:
+            True if the register was refreshed successfully, False otherwise. Usually this means the register does not
+                exist on the remote node.
         """
         self._check_node_id()
         if not isinstance(name, uavcan.register.Name_1):
             name = uavcan.register.Name_1(name)
+        if full:
+            basename = Register._get_basename(name)
+            if not await self.refresh_register(basename, full=False):
+                return False
+            await asyncio.gather(
+                self.refresh_register(f"{basename}<", full=False),
+                self.refresh_register(f"{basename}>", full=False),
+                self.refresh_register(f"{basename}=", full=False),
+            )
+            return True
+
         command = uavcan.register.Access_1.Request(name)
         async with self._access_client() as client:
             for _attempt in range(self.REQUEST_ATTEMPTS):
@@ -214,9 +231,21 @@ class Registry:
         if result is None:
             # none of the {up to N} attempts returned a result
             _logger.info("Access to register %s of node %i failed", Register._parse_name(name), self.node_id)
-            raise RuntimeError(f"Access to register {Register._parse_name(name)} of node {self.node_id} failed")
+            return False
         response: uavcan.register.Access_1.Response = result[0]
-        self._insert(name, response)
+
+        if not isinstance(response.value.empty, uavcan.primitive.Empty_1):
+            self._insert(name, response)
+            return True
+
+        # register does not exist
+        name_str = name.name.tobytes().decode()
+        if name_str == Register._get_basename(name):
+            _logger.info("Register %s does not exist on node %i", name_str, self.node_id)
+        else:
+            # don't log non-existence of meta (min/max/default) registers
+            pass
+        return False
 
     @staticmethod
     def _check_key(key: Any) -> None:
