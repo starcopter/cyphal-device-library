@@ -478,7 +478,7 @@ class Register:
 
     def __str__(self) -> str:
         attrs = ", ".join(
-            f"{key}={value}"
+            f"{key}={value!r}"
             for key, value in {
                 "value": self.value,
                 "min": self.min,
