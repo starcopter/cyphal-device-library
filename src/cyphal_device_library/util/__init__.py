@@ -1,11 +1,15 @@
 import asyncio
 import logging
+from collections.abc import Sequence
 from functools import partial
 from pathlib import Path
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 import rich.console
 import rich.prompt
+
+if TYPE_CHECKING:
+    from pycyphal.transport.can import CANTransport
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -33,6 +37,24 @@ def configure_logging(console: rich.console.Console | None = None, filename: Pat
             )
         )
         root_logger.addHandler(file_handler)
+
+
+def make_can_transport(iface: str, bitrate: int | list[int], node_id: int) -> "CANTransport":
+    from pycyphal.application import make_transport
+    from pycyphal.application.register import Natural16, Natural32, ValueProxy
+
+    if not isinstance(bitrate, Sequence):
+        bitrate = [bitrate]
+
+    mtu = 64 if len(bitrate) > 1 else 8
+
+    config = {
+        "uavcan.can.iface": ValueProxy(iface),
+        "uavcan.can.mtu": ValueProxy(Natural16([mtu])),
+        "uavcan.can.bitrate": ValueProxy(Natural32(bitrate)),
+        "uavcan.node.id": ValueProxy(Natural16([node_id])),
+    }
+    return make_transport(config)
 
 
 async def async_prompt(prompt: rich.prompt.PromptBase[T], default: T = ...) -> T:

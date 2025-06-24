@@ -41,6 +41,7 @@ class Client:
         *,
         version: uavcan.node.Version_1_0 | None = None,
         uid: int | None = None,
+        transport: pycyphal.transport.Transport | None = None,
         registry: Path | str | None = None,
         parallel_updates: int = 6,
         logger: logging.Logger = logging.getLogger(__name__),
@@ -51,6 +52,8 @@ class Client:
             name: The name of the node.
             version: Optional software version of the node.
             uid: Optional unique identifier for the node.
+            transport: The transport to use for the client. If not specified, a transport will be created from
+                environment variables.
             registry: Optional path to the registry directory.
             parallel_updates: Maximum number of parallel software updates allowed.
             logger: The logger to use for logging. Defaults to the logger for this module.
@@ -60,7 +63,9 @@ class Client:
             node_info_attrs["software_version"] = version
         if uid is not None:
             node_info_attrs["unique_id"] = uid.to_bytes(16, "big")
-        self.node = pycyphal.application.make_node(pycyphal.application.NodeInfo(**node_info_attrs), registry)
+        self.node = pycyphal.application.make_node(
+            pycyphal.application.NodeInfo(**node_info_attrs), registry, transport=transport
+        )
 
         self.logger = logger
 
