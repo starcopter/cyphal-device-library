@@ -104,6 +104,8 @@ class Client:
         self.update_semaphore = asyncio.Semaphore(parallel_updates)
         self.node.heartbeat_publisher.mode = uavcan.node.Mode_1.OPERATIONAL
 
+        self._nested_contexts = 0
+
     def start(self) -> None:
         """Start the Cyphal node and begin processing messages."""
         self.logger.debug("starting Python node")
@@ -124,11 +126,23 @@ class Client:
             >>> with Client("my_node") as client:
             ...     await client.restart_node(17)
         """
-        self.start()
+        if self._nested_contexts == 0:
+            self.start()
+        self._nested_contexts += 1
+        self.logger.debug("entering nested context %i", self._nested_contexts)
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
-        self.close()
+        self.logger.debug("exiting nested context %i", self._nested_contexts)
+        self._nested_contexts -= 1
+        if self._nested_contexts == 0:
+            self.close()
+
+    async def __aenter__(self) -> "Client":
+        return self.__enter__()
+
+    async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+        self.__exit__(exc_type, exc_value, traceback)
 
     def _log_node_changes(self, node_id: int, old_entry: Entry | None, new_entry: Entry | None) -> None:
         self.node.heartbeat_publisher.vendor_specific_status_code = len(self.node_tracker.registry)
