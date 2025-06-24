@@ -1,6 +1,6 @@
 [project]
 name = "cyphal-device-library"
-version = "0.3.0"
+version = "0.3.1"
 description = "Library to simplify Interaction with Cyphal Devices"
 readme = "README.md"
 authors = [
@@ -37,7 +37,7 @@ line-length = 120
 extend-select = ["I"]
 
 [tool.bumpversion]
-current_version = "0.3.0"
+current_version = "0.3.1"
 parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
 serialize = ["{major}.{minor}.{patch}"]
 search = "{current_version}"
