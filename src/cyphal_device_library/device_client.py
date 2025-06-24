@@ -59,6 +59,8 @@ class DeviceClient(Client):
         self,
         name: str | None = None,
         dut: int | str | None = None,
+        *,
+        transport: pycyphal.transport.Transport | None = None,
     ) -> None:
         """
         A client for a device under test (DUT).
@@ -66,8 +68,10 @@ class DeviceClient(Client):
         Args:
             name: The name of the client.
             dut: The node ID or name of the device under test.
+            transport: The transport to use for the client. If not specified, the client will read
+                transport information from environment variables.
         """
-        super().__init__(name or self.DEFAULT_NAME)
+        super().__init__(name or self.DEFAULT_NAME, transport=transport)
         assert self.node.id is not None, "node must not be anonymous"
 
         self.registry = Registry(None, self.node.make_client)
