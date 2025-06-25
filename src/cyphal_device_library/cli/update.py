@@ -211,8 +211,8 @@ async def update_all_nodes(
         heartbeat = nodes[node_id].heartbeat
         node_hw_version = f"{info.hardware_version.major}.{info.hardware_version.minor}"
         node_sw_version = f"{info.software_version.major}.{info.software_version.minor}"
-        node_vcs = f"{info.software_vcs_revision_id:08x}"
-        node_crc = f"{info.software_image_crc[0]:08x}" if info.software_image_crc.size > 0 else ""
+        node_vcs = f"{info.software_vcs_revision_id:016x}"
+        node_crc = f"{info.software_image_crc[0]:016x}" if info.software_image_crc.size > 0 else ""
         node_mode = heartbeat.mode.value
         node_health = heartbeat.health.value
 
@@ -318,8 +318,8 @@ async def async_update_single(
             heartbeat, info = node_registry[node_id]
             node_hw_version = f"{info.hardware_version.major}.{info.hardware_version.minor}"
             node_sw_version = f"{info.software_version.major}.{info.software_version.minor}"
-            node_vcs = f"{info.software_vcs_revision_id:08x}" if info.software_vcs_revision_id else ""
-            node_crc = f"{info.software_image_crc[0]:08x}" if info.software_image_crc.size > 0 else ""
+            node_vcs = f"{info.software_vcs_revision_id:016x}" if info.software_vcs_revision_id else ""
+            node_crc = f"{info.software_image_crc[0]:016x}" if info.software_image_crc.size > 0 else ""
             node_mode = heartbeat.mode.value
             node_health = heartbeat.health.value
 
