@@ -254,6 +254,7 @@ async def update_all_nodes(
 
 @app.command()
 def update(
+    ctx: typer.Context,
     nodes: Annotated[
         str,
         typer.Argument(help="Set of Node IDs (e.g. '1,3,10-20,!13'), or 'all' to update all available nodes"),
@@ -267,10 +268,13 @@ def update(
     """Update a specified set of nodes with a specific software file."""
 
     node_set = set(range(126)) if nodes == "all" else parse_int_set(nodes)
+    pnp = ctx.parent.params.get("pnp", False) if ctx.parent else False
 
     try:
         asyncio.run(
-            async_update_single(node_set, file, parallel_updates or get_default_parallel_updates(), timeout=timeout)
+            async_update_single(
+                node_set, file, parallel_updates or get_default_parallel_updates(), timeout=timeout, pnp=pnp
+            )
         )
     except KeyboardInterrupt:
         typer.echo("Cancelled by user, exiting.")
@@ -278,10 +282,12 @@ def update(
         pass
 
 
-async def async_update_single(node_ids: set[int], file: Path, parallel_updates: int, timeout: float = 300) -> None:
+async def async_update_single(
+    node_ids: set[int], file: Path, parallel_updates: int, timeout: float = 300, pnp: bool = False
+) -> None:
     console = rich.console.Console()
 
-    with Client("com.starcopter.update-server", parallel_updates=parallel_updates) as client:
+    with Client("com.starcopter.update-server", parallel_updates=parallel_updates, pnp_server=pnp) as client:
         await asyncio.sleep(2)
 
         node_registry = client.node_tracker.registry
@@ -355,12 +361,15 @@ async def async_update_single(node_ids: set[int], file: Path, parallel_updates: 
 
 @app.command()
 def update_all(
+    ctx: typer.Context,
     parallel_updates: int | None = typer.Option(None, "--parallel", "-n", help="Number of parallel updates"),
     software_path: Path = typer.Option(Path("bin"), "--path", "-p", help="Path to software files"),
     timeout: float = typer.Option(10, "--timeout", "-t", help="Timeout for each update in seconds."),
     force: bool = typer.Option(False, "--force", "-f", help="Force update even if the software is up to date."),
 ) -> None:
     """Update all nodes with the latest software."""
+
+    pnp = ctx.parent.params.get("pnp", False) if ctx.parent else False
 
     try:
         asyncio.run(
@@ -369,6 +378,7 @@ def update_all(
                 software_path,
                 timeout=timeout,
                 force=force,
+                pnp=pnp,
             )
         )
     except KeyboardInterrupt:
@@ -378,14 +388,18 @@ def update_all(
 
 
 async def async_update_all(
-    parallel_updates: int = 1, software_path: str | Path = "bin", timeout: float = 10, force: bool = False
+    parallel_updates: int = 1,
+    software_path: str | Path = "bin",
+    timeout: float = 10,
+    force: bool = False,
+    pnp: bool = False,
 ):
     console = rich.console.Console()
 
     software_files = SoftwareDirectory.from_path(software_path)
     software_files.print_rich_table(console)
 
-    with Client("com.starcopter.update-server", parallel_updates=parallel_updates) as client:
+    with Client("com.starcopter.update-server", parallel_updates=parallel_updates, pnp_server=pnp) as client:
         await asyncio.sleep(3)
 
         await update_all_nodes(client, software_files, console, timeout=timeout, force=force)

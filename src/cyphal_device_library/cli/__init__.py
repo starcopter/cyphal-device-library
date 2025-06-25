@@ -22,6 +22,9 @@ except ImportError:
 def main(
     verbosity: Annotated[int, typer.Option("--verbose", "-v", count=True)] = 0,
     reload: Annotated[bool, typer.Option("--reload", "-r", help="Reload environment from .env file")] = False,
+    pnp: Annotated[
+        bool, typer.Option("--pnp-server", "-p", help="Launch PnP server for dynamic node ID allocation.")
+    ] = False,
 ):
     if reload:
         load_dotenv(override=True)

@@ -15,6 +15,7 @@ import uavcan.node
 import uavcan.register
 from pycyphal.application.file import FileServer
 from pycyphal.application.node_tracker import Entry, NodeTracker
+from pycyphal.application.plug_and_play import CentralizedAllocator
 
 
 class Client:
@@ -45,6 +46,7 @@ class Client:
         registry: Path | str | None = None,
         parallel_updates: int = 6,
         logger: logging.Logger = logging.getLogger(__name__),
+        pnp_server: bool = True,
     ) -> None:
         """Initialize a new Cyphal Client.
 
@@ -83,6 +85,11 @@ class Client:
             lambda: self.sub_diagnostic_record.receive_in_background(self._log_diagnostic_record),
             self.sub_diagnostic_record.close,
         )
+
+        if pnp_server:
+            self.pnp_allocator = CentralizedAllocator(self.node)
+        else:
+            self.pnp_allocator = None
 
         self.update_semaphore = asyncio.Semaphore(parallel_updates)
         self.node.heartbeat_publisher.mode = uavcan.node.Mode_1.OPERATIONAL

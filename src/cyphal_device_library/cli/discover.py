@@ -69,8 +69,8 @@ def format_node_table(nodes: dict[int, pycyphal.application.node_tracker.Entry])
     return table
 
 
-async def async_discover(frame_rate: float = 4):
-    with Client("com.starcopter.device-discovery") as client:
+async def async_discover(frame_rate: float = 4, pnp: bool = False):
+    with Client("com.starcopter.device-discovery", pnp_server=pnp) as client:
 
         def get_table():
             return rich.padding.Padding(format_node_table(client.node_tracker.registry), (0, 1))
@@ -85,6 +85,7 @@ async def async_discover(frame_rate: float = 4):
 
 
 @app.command()
-def discover():
+def discover(ctx: typer.Context):
     """Discover and display Cyphal nodes on the network."""
-    asyncio.run(async_discover())
+    pnp = ctx.parent.params.get("pnp", False) if ctx.parent else False
+    asyncio.run(async_discover(pnp=pnp))
