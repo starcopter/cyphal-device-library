@@ -50,7 +50,8 @@ def format_node_table(nodes: dict[int, pycyphal.application.node_tracker.Entry])
         ]
 
         if entry.info is not None:
-            git_hash = f"{entry.info.software_vcs_revision_id:08x}" if entry.info.software_vcs_revision_id else ""
+            git_hash = f"{entry.info.software_vcs_revision_id:016x}" if entry.info.software_vcs_revision_id else ""
+            crc: int | None = int(entry.info.software_image_crc[0]) if entry.info.software_image_crc.size > 0 else None
 
             row.extend(
                 [
@@ -58,7 +59,7 @@ def format_node_table(nodes: dict[int, pycyphal.application.node_tracker.Entry])
                     f"{entry.info.hardware_version.major}.{entry.info.hardware_version.minor}",
                     f"{entry.info.software_version.major}.{entry.info.software_version.minor}",
                     git_hash,
-                    entry.info.software_image_crc.tobytes().hex(),
+                    f"{crc:016x}" if crc is not None else "",
                     entry.info.unique_id.tobytes().hex(),
                 ]
             )
