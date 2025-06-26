@@ -88,6 +88,15 @@ class Client:
 
         if pnp_server:
             self.pnp_allocator = CentralizedAllocator(self.node)
+
+            def pnp_register_node(node_id: int, _old: Entry | None, entry: Entry | None) -> None:
+                try:
+                    unique_id = entry.info.unique_id.tobytes()
+                except AttributeError:
+                    unique_id = None
+                self.pnp_allocator.register_node(node_id, unique_id)
+
+            self.node_tracker.add_update_handler(pnp_register_node)
         else:
             self.pnp_allocator = None
 
