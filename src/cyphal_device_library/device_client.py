@@ -7,6 +7,7 @@ import re
 import warnings
 from pathlib import Path
 from typing import AsyncGenerator, Type, TypeVar
+import yaml
 
 import pycyphal
 import pycyphal.application
@@ -412,3 +413,37 @@ class DeviceClient(Client):
         port_type = self._get_port_type(port_name)
 
         return self.node.make_subscriber(port_type, port_id)
+    
+    async def save_mmb_params(self, yaml_file: str) -> None:
+        """
+        Load register values from a YAML file and write them into the MMB registers.
+        
+        Args:
+            yaml_file: Path to the YAML file containing register values.
+
+        Raises:
+            FileNotFoundError: If the specified YAML file does not exist.
+            Exception: If an error occurs while writing to the registers, 
+            e.g. if the register does not exist
+        """
+
+        try:
+            with open(yaml_file, 'r') as file: 
+                mmb_data = yaml.safe_load(file)
+
+            logger.info(f"Found MMB data in {yaml_file}")
+            
+            try:
+                for key, value in mmb_data.items():
+                    #print(f"{key}: {value}")
+                    await self.write_register(key, mmb_data[key])
+
+                await self.restart()
+                logger.info("Successfully saved data in MMB")
+                
+                            
+            except Exception as e:
+                logger.error(f"Could not save data in MMB: {e}")
+
+        except FileNotFoundError:
+            logger.error("Could not find yaml file")
