@@ -22,6 +22,7 @@ import rich.table
 import typer
 import uavcan.node
 from pycyphal.application import node_tracker
+from pycyphal.application.node_tracker import Entry 
 from rich.prompt import Confirm
 
 from ..client import Client
@@ -86,6 +87,15 @@ class SoftwareFile:
 
         return self.name == node_name and self.hw_version == node_hw_version
 
+    def is_hw_compatible_to(self, node: node_tracker.Entry) -> bool:
+        if node.info is None:
+            logger.warning("Node %s: no info available, cannot determine compatibility", node.id)
+            return False
+
+        node_hw_version = f"{node.info.hardware_version.major}.{node.info.hardware_version.minor}"
+
+        return self.hw_version == node_hw_version
+
     @property
     def _sort_key(self) -> tuple[str, str, str, float]:
         return self.name, self.hw_version, self.sw_version, self.file.stat().st_mtime
@@ -111,19 +121,21 @@ class SoftwareDirectory(list[SoftwareFile]):
 
         return self
 
-    def get_updates_for(self, node: node_tracker.Entry) -> list[SoftwareFile]:
+    def get_updates_for(self, node: node_tracker.Entry, selftest_update: bool = False) -> list[SoftwareFile]:
         if node.info is None:
             logger.warning("Node %s: no info available, cannot determine updates", node.id)
             return []
-
-        compatible = [file for file in self if file.is_compatible_to(node)]
+        if not selftest_update:
+            compatible = [file for file in self if file.is_compatible_to(node)]
+        else:
+            compatible = [file for file in self if file.is_hw_compatible_to(node)]
         name = node.info.name.tobytes().decode()
         hw_version = f"{node.info.hardware_version.major}.{node.info.hardware_version.minor}"
         logger.debug("%s %s: found %d compatible software files", name, hw_version, len(compatible))
         return compatible
 
-    def get_update_for(self, node: node_tracker.Entry, force: bool = False) -> SoftwareFile | None:
-        updates = self.get_updates_for(node)
+    def get_update_for(self, node: node_tracker.Entry, force: bool = False, selftest_update: bool = False) -> SoftwareFile | None:
+        updates = self.get_updates_for(node, selftest_update=selftest_update)
         if not updates:
             return None
 
@@ -176,6 +188,23 @@ HEALTH_NAMES = {
     uavcan.node.Health_1.WARNING: "Warning",
 }
 
+async def update_all_selftest_nodes(
+    client: Client,
+    software_files: SoftwareDirectory,
+    console: rich.console.Console,
+    timeout: float = 10,
+) -> None:
+    nodes = {node_id: node for node_id, node in client.node_tracker.registry.items() if node.info is not None}
+    updates = {
+        node_id: file
+        for node_id, node in nodes.items()
+        if (file := software_files.get_update_for(node, selftest_update=True)) is not None and "selftest" not in file.name 
+        and "selftest" in node.info.name.tobytes().decode() # or == "com.starcopter.selftest"
+    }
+    if not updates:
+        logger.info("No nodes to update")
+        return
+    execute_updates(client, console, timeout=timeout, nodes=nodes, updates=updates)
 
 async def update_all_nodes(
     client: Client,
@@ -190,7 +219,15 @@ async def update_all_nodes(
         for node_id, node in nodes.items()
         if (file := software_files.get_update_for(node, force=force)) is not None
     }
+    execute_updates(client, console, timeout=timeout, nodes=nodes, updates=updates)
 
+async def execute_updates(
+    client: Client,
+    console: rich.console.Console,
+    timeout: float,
+    nodes: dict[int, Entry],
+    updates: dict[int, SoftwareFile],
+) -> None:
     if not updates:
         logger.info("No nodes to update")
         return
@@ -251,6 +288,48 @@ async def update_all_nodes(
 
     console.print(_padded(table))
 
+async def async_selftest_update_all(
+    parallel_updates: int = 1,
+    software_path: str | Path = "bin",
+    timeout: float = 10,
+    pnp: bool = False,
+):
+    console = rich.console.Console()
+
+    software_files = SoftwareDirectory.from_path(software_path)
+    software_files.print_rich_table(console)
+
+    with Client("com.starcopter.update-server", parallel_updates=parallel_updates, pnp_server=pnp) as client:
+        await asyncio.sleep(3)
+
+        await update_all_selftest_nodes(client, software_files, console, timeout=timeout)
+
+        await asyncio.sleep(0.1)
+
+@app.command()
+def selftest_update_all(
+    ctx: typer.Context,
+    parallel_updates: int | None = typer.Option(None, "--parallel", "-n", help="Number of parallel updates"),
+    software_path: Path = typer.Option(Path("bin"), "--path", "-p", help="Path to software files"),
+    timeout: float = typer.Option(10, "--timeout", "-t", help="Timeout for each update in seconds."),
+) -> None:
+    """Update all selftest nodes with the latest software."""
+
+    pnp = ctx.parent.params.get("pnp", False) if ctx.parent else False
+
+    try:
+        asyncio.run(
+            async_selftest_update_all(
+                parallel_updates or get_default_parallel_updates(),
+                software_path,
+                timeout=timeout,
+                pnp=pnp,
+            )
+        )
+    except KeyboardInterrupt:
+        typer.echo("Cancelled by user, exiting.")
+    except (pycyphal.presentation.PortClosedError, asyncio.InvalidStateError):
+        pass
 
 @app.command()
 def update(
