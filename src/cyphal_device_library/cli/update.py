@@ -96,6 +96,9 @@ class SoftwareFile:
 
         return self.hw_version == node_hw_version
 
+    def is_selftest(self) -> bool:
+        return "selftest" in self.name
+
     @property
     def _sort_key(self) -> tuple[str, str, str, float]:
         return self.name, self.hw_version, self.sw_version, self.file.stat().st_mtime
@@ -128,7 +131,10 @@ class SoftwareDirectory(list[SoftwareFile]):
         if not selftest_update:
             compatible = [file for file in self if file.is_compatible_to(node)]
         else:
-            compatible = [file for file in self if file.is_hw_compatible_to(node)]
+            if ("selftest" not in node.info.name.tobytes().decode()):
+                logger.warning("Node %s: selftest update requested, but node is not a selftest node", node.info.name.tobytes().decode())
+                return []
+            compatible = [file for file in self if file.is_hw_compatible_to(node) and not file.is_selftest()]
         name = node.info.name.tobytes().decode()
         hw_version = f"{node.info.hardware_version.major}.{node.info.hardware_version.minor}"
         logger.debug("%s %s: found %d compatible software files", name, hw_version, len(compatible))
@@ -141,6 +147,12 @@ class SoftwareDirectory(list[SoftwareFile]):
 
         assert node.info is not None, "Node info is required to determine updates"
 
+        if (len(updates) > 1):
+            logger.warning(
+                "Node %s: found multiple compatible software files (%d), using the latest one",
+                node.id,
+                len(updates),
+            )
         file = max(updates, key=lambda x: x._sort_key)
         file_version_tuple: tuple[int, int] = tuple(map(int, file.sw_version.split(".")))
         file_vcs_int = int(file.vcs, 16) if file.vcs else 0
@@ -197,14 +209,20 @@ async def update_all_selftest_nodes(
     nodes = {node_id: node for node_id, node in client.node_tracker.registry.items() if node.info is not None}
     updates = {
         node_id: file
-        for node_id, node in nodes.items()
-        if (file := software_files.get_update_for(node, selftest_update=True)) is not None and "selftest" not in file.name 
-        and "selftest" in node.info.name.tobytes().decode() # or == "com.starcopter.selftest"
+        for node_id, node in nodes.items() if node.info is not None and "selftest" in node.info.name.tobytes().decode()
+        # == "com.starcopter.selftest"
+        if (file := software_files.get_update_for(node, selftest_update=True)) is not None 
+        # and "selftest" not in file.name 
+        # and "selftest" in node.info.name.tobytes().decode() # or == "com.starcopter.selftest"
     }
+    
+    for node_id, file in updates.items():
+        logger.info("Node %d: updating to %s", node_id, file.file.name)
+
     if not updates:
         logger.info("No nodes to update")
         return
-    execute_updates(client, console, timeout=timeout, nodes=nodes, updates=updates)
+    await execute_updates(client, console, timeout=timeout, nodes=nodes, updates=updates)
 
 async def update_all_nodes(
     client: Client,
@@ -219,7 +237,7 @@ async def update_all_nodes(
         for node_id, node in nodes.items()
         if (file := software_files.get_update_for(node, force=force)) is not None
     }
-    execute_updates(client, console, timeout=timeout, nodes=nodes, updates=updates)
+    await execute_updates(client, console, timeout=timeout, nodes=nodes, updates=updates)
 
 async def execute_updates(
     client: Client,
