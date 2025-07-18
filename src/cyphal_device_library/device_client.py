@@ -447,3 +447,43 @@ class DeviceClient(Client):
 
         except FileNotFoundError:
             logger.error("Could not find yaml file")
+
+    
+    async def motor_params_into_yaml(self, target_node_id: int, yaml_motor: str) -> None:
+        """Reads motor parameters from the connected arm and saves them under the specified node ID in a YAML file.
+        
+        Args:
+            target_node_id: The node ID under which the motor parameters are to be saved.
+            yaml_motor: Path to the YAML file
+        """
+        try: 
+            resistance = await self.read_register("motor.resistance")
+            inductance = await self.read_register("motor.inductance_dq")
+            flux = await self.read_register("motor.flux_linkage")
+        except Exception as e:
+            logger.error(f"Could not read motor parameter from node {target_node_id}: {e}")
+            return
+        
+        if os.path.exists(yaml_motor):
+            with open(yaml_motor, "r") as f:
+                existing_data = yaml.safe_load(f)
+        else:
+            existing_data = {}
+
+        existing_data[target_node_id] = {
+            "motor.resistance": resistance,
+            "motor.flux_linkage": flux,
+            "motor.inductance_dq": inductance,
+        }
+
+        sorted_data = dict(sorted(existing_data.items(), key=lambda item: int(item[0])))
+        
+        try:
+            with open(yaml_motor, "w") as f:
+                yaml.dump(sorted_data, f, sort_keys=False, default_flow_style=None)
+
+            logger.info(f"Successfully saved data in {yaml_motor}")
+
+        except Exception as e:
+            logger.error(f"Could not save data in {yaml_motor}: {e}")
+
