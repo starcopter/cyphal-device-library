@@ -451,7 +451,7 @@ async def async_update_single(
                 assert isinstance(result, float), f"Expected float, got {type(result)}"
                 status = f"✔ successfully updated to {file.name} in {result:.2f}s"
 
-        table.add_row(str(node_id), status)
+            table.add_row(str(node_id), status)
 
         console.print(_padded(table))
 
