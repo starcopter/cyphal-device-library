@@ -104,6 +104,8 @@ class Client:
         self.update_semaphore = asyncio.Semaphore(parallel_updates)
         self.node.heartbeat_publisher.mode = uavcan.node.Mode_1.OPERATIONAL
 
+        self._nested_contexts = 0
+
     def start(self) -> None:
         """Start the Cyphal node and begin processing messages."""
         self.logger.debug("starting Python node")
@@ -124,11 +126,23 @@ class Client:
             >>> with Client("my_node") as client:
             ...     await client.restart_node(17)
         """
-        self.start()
+        if self._nested_contexts == 0:
+            self.start()
+        self._nested_contexts += 1
+        self.logger.debug("entering nested context %i", self._nested_contexts)
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
-        self.close()
+        self.logger.debug("exiting nested context %i", self._nested_contexts)
+        self._nested_contexts -= 1
+        if self._nested_contexts == 0:
+            self.close()
+
+    async def __aenter__(self) -> "Client":
+        return self.__enter__()
+
+    async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+        self.__exit__(exc_type, exc_value, traceback)
 
     def _log_node_changes(self, node_id: int, old_entry: Entry | None, new_entry: Entry | None) -> None:
         self.node.heartbeat_publisher.vendor_specific_status_code = len(self.node_tracker.registry)
@@ -178,6 +192,31 @@ class Client:
             info_list.append(f"CRC {crc:0{width}x}")
 
         return ", ".join(info_list)
+
+    async def get_info(self, node_id: int) -> uavcan.node.GetInfo_1.Response:
+        """Request information about a remote node.
+
+        This method is completely independent from the NodeTracker.
+
+        Args:
+            node_id: The ID of the node to request information about.
+
+        Returns:
+            The response from the remote node.
+
+        Raises:
+            TimeoutError: If the request times out.
+        """
+        request = uavcan.node.GetInfo_1.Request()
+        client = self.node.make_client(uavcan.node.GetInfo_1, node_id)
+        try:
+            result = await client.call(request)
+            if result is None:
+                raise TimeoutError(f"GetInfo request to node {node_id} timed out")
+            response, _meta = result
+            return response
+        finally:
+            client.close()
 
     async def execute_command(
         self, command: uavcan.node.ExecuteCommand_1.Request, server_node_id: int
