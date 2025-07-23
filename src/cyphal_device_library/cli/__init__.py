@@ -32,7 +32,6 @@ def main(
             "--diagnostic",
             "-d",
             help="Set the logging level for Cyphal DiagnosticRecords, e.g. in discovery",
-            count=True,
         ),
     ] = 3,
     reload: Annotated[bool, typer.Option("--reload", "-r", help="Reload environment from .env file")] = False,
