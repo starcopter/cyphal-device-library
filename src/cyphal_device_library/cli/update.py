@@ -22,7 +22,7 @@ import rich.table
 import typer
 import uavcan.node
 from pycyphal.application import node_tracker
-from pycyphal.application.node_tracker import Entry 
+from pycyphal.application.node_tracker import Entry
 from rich.prompt import Confirm
 
 from ..client import Client
@@ -131,8 +131,11 @@ class SoftwareDirectory(list[SoftwareFile]):
         if not selftest_update:
             compatible = [file for file in self if file.is_compatible_to(node)]
         else:
-            if ("selftest" not in node.info.name.tobytes().decode()):
-                logger.warning("Node %s: selftest update requested, but node is not a selftest node", node.info.name.tobytes().decode())
+            if "selftest" not in node.info.name.tobytes().decode():
+                logger.warning(
+                    "Node %s: selftest update requested, but node is not a selftest node",
+                    node.info.name.tobytes().decode(),
+                )
                 return []
             compatible = [file for file in self if file.is_hw_compatible_to(node) and not file.is_selftest()]
         name = node.info.name.tobytes().decode()
@@ -140,14 +143,16 @@ class SoftwareDirectory(list[SoftwareFile]):
         logger.debug("%s %s: found %d compatible software files", name, hw_version, len(compatible))
         return compatible
 
-    def get_update_for(self, node: node_tracker.Entry, force: bool = False, selftest_update: bool = False) -> SoftwareFile | None:
+    def get_update_for(
+        self, node: node_tracker.Entry, force: bool = False, selftest_update: bool = False
+    ) -> SoftwareFile | None:
         updates = self.get_updates_for(node, selftest_update=selftest_update)
         if not updates:
             return None
 
         assert node.info is not None, "Node info is required to determine updates"
 
-        if (len(updates) > 1):
+        if len(updates) > 1:
             logger.warning(
                 "Node %s: found multiple compatible software files (%d), using the latest one",
                 node.id,
@@ -200,6 +205,7 @@ HEALTH_NAMES = {
     uavcan.node.Health_1.WARNING: "Warning",
 }
 
+
 async def update_all_selftest_nodes(
     client: Client,
     software_files: SoftwareDirectory,
@@ -209,13 +215,14 @@ async def update_all_selftest_nodes(
     nodes = {node_id: node for node_id, node in client.node_tracker.registry.items() if node.info is not None}
     updates = {
         node_id: file
-        for node_id, node in nodes.items() if node.info is not None and "selftest" in node.info.name.tobytes().decode()
+        for node_id, node in nodes.items()
+        if node.info is not None and "selftest" in node.info.name.tobytes().decode()
         # == "com.starcopter.selftest"
-        if (file := software_files.get_update_for(node, selftest_update=True)) is not None 
-        # and "selftest" not in file.name 
+        if (file := software_files.get_update_for(node, selftest_update=True)) is not None
+        # and "selftest" not in file.name
         # and "selftest" in node.info.name.tobytes().decode() # or == "com.starcopter.selftest"
     }
-    
+
     for node_id, file in updates.items():
         logger.info("Node %d: updating to %s", node_id, file.file.name)
 
@@ -223,6 +230,7 @@ async def update_all_selftest_nodes(
         logger.info("No nodes to update")
         return
     await execute_updates(client, console, timeout=timeout, nodes=nodes, updates=updates)
+
 
 async def update_all_nodes(
     client: Client,
@@ -238,6 +246,7 @@ async def update_all_nodes(
         if (file := software_files.get_update_for(node, force=force)) is not None
     }
     await execute_updates(client, console, timeout=timeout, nodes=nodes, updates=updates)
+
 
 async def execute_updates(
     client: Client,
@@ -306,6 +315,7 @@ async def execute_updates(
 
     console.print(_padded(table))
 
+
 async def async_selftest_update_all(
     parallel_updates: int = 1,
     software_path: str | Path = "bin",
@@ -323,6 +333,7 @@ async def async_selftest_update_all(
         await update_all_selftest_nodes(client, software_files, console, timeout=timeout)
 
         await asyncio.sleep(0.1)
+
 
 @app.command()
 def selftest_update_all(
@@ -348,6 +359,7 @@ def selftest_update_all(
         typer.echo("Cancelled by user, exiting.")
     except (pycyphal.presentation.PortClosedError, asyncio.InvalidStateError):
         pass
+
 
 @app.command()
 def update(
