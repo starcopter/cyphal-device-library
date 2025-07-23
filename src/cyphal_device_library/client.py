@@ -310,7 +310,10 @@ class Client:
             return True
         finally:
             # will actually be executed _before_ returning
-            self.node_tracker.remove_update_handler(handler)
+            try:
+                self.node_tracker.remove_update_handler(handler)
+            except ValueError:
+                pass
 
     async def update(self, node_id: int, image: Path | str, wait: bool = True, timeout: float = 10.0) -> float:
         """Update the software on a remote node.

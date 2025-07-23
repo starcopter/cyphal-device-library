@@ -209,7 +209,7 @@ class Registry:
         if result is None:
             # none of the {up to N} attempts returned a result
             _logger.info("Access to register %s of node %i failed", Register._parse_name(name), self.node_id)
-            return
+            raise RuntimeError(f"Access to register {Register._parse_name(name)} of node {self.node_id} failed")
         response: uavcan.register.Access_1.Response = result[0]
         self._insert(name, response)
 
@@ -493,14 +493,14 @@ class Register:
 
     async def refresh(self) -> None:
         """Refresh the register's value and metadata from the remote node."""
-        tasks = {self._registry.refresh_register(self.name)}
-        if self.has_default:
-            tasks.add(self._registry.refresh_register(f"{self.name}="))
-        if self.has_min:
-            tasks.add(self._registry.refresh_register(f"{self.name}<"))
-        if self.has_max:
-            tasks.add(self._registry.refresh_register(f"{self.name}>"))
-        await asyncio.gather(*tasks)
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(self._registry.refresh_register(self.name))
+            if self.has_default:
+                tg.create_task(self._registry.refresh_register(f"{self.name}="))
+            if self.has_min:
+                tg.create_task(self._registry.refresh_register(f"{self.name}<"))
+            if self.has_max:
+                tg.create_task(self._registry.refresh_register(f"{self.name}>"))
 
     async def set_value(self, value: NativeValue) -> bool:
         """Set the register's value on the remote node.

@@ -115,7 +115,10 @@ class DeviceClient(Client):
                 try:
                     await self._initialized.wait()
                 finally:
-                    self.node_tracker.remove_update_handler(_discover_device)
+                    try:
+                        self.node_tracker.remove_update_handler(_discover_device)
+                    except ValueError:
+                        pass
 
             asyncio.get_event_loop().create_task(_wait_for_device_discovery())
 
@@ -186,7 +189,10 @@ class DeviceClient(Client):
             try:
                 await update.wait()
             finally:
-                self.node_tracker.remove_update_handler(_notify)
+                try:
+                    self.node_tracker.remove_update_handler(_notify)
+                except ValueError:
+                    pass
 
         assert isinstance(self.info, uavcan.node.GetInfo_1.Response)
         return self.info
@@ -259,6 +265,12 @@ class DeviceClient(Client):
         assert success
         return register.value
 
+    async def print_registry(self):
+        """Print the current state of the registry."""
+        logger.info("Current registry state:")
+        for register in self.registry:
+            logger.info(register)
+
     async def reset_register(self, register_name: str) -> NativeValue:
         """Reset a register to its default value.
 
@@ -309,7 +321,7 @@ class DeviceClient(Client):
         """
         register = self.registry["uavcan.node.id"]
         if await register.set_value(node_id):
-            self.dut = node_id
+            self.dut = self.registry.node_id = node_id
         else:
             raise RuntimeError(f"Failed to set node ID to {node_id}")
 
