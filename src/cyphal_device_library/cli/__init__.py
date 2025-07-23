@@ -6,11 +6,13 @@ from dotenv import load_dotenv
 import logging
 
 from . import dsdl
+from . import version
 from ._util import configure_logging, set_default_usbtingo_env_vars
 from ..client import Client
 
 app = typer.Typer()
 app.add_typer(dsdl.app)
+app.add_typer(version.app)
 
 try:
     from . import discover, update
