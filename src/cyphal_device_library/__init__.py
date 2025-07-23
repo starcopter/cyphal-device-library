@@ -1,0 +1,3 @@
+from .util.logging import patch_log_levels_in_python_logging_module
+
+patch_log_levels_in_python_logging_module()

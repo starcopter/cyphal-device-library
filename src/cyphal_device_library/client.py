@@ -12,10 +12,11 @@ import pycyphal
 import pycyphal.application
 import uavcan.diagnostic
 import uavcan.node
-import uavcan.register
 from pycyphal.application.file import FileServer
 from pycyphal.application.node_tracker import Entry, NodeTracker
 from pycyphal.application.plug_and_play import CentralizedAllocator
+
+from .util.logging import UAVCAN_SEVERITY_TO_PYTHON
 
 
 class Client:
@@ -446,36 +447,7 @@ class Client:
         """
         heartbeat, info = self.node_tracker.registry.get(transfer.source_node_id, (None, None))
         logging.getLogger("uavcan.diagnostic.record").log(
-            level=self._UAVCAN_SEVERITY_TO_PYTHON[record.severity.value],
+            level=UAVCAN_SEVERITY_TO_PYTHON[record.severity.value],
             msg=record.text.tobytes().decode("utf8", errors="replace"),
             extra={"record": record, "transfer": transfer, "heartbeat": heartbeat, "info": info},
         )
-
-    _UAVCAN_SEVERITY_TO_PYTHON = {
-        uavcan.diagnostic.Severity_1.TRACE: 5,  # DEBUG - 5
-        uavcan.diagnostic.Severity_1.DEBUG: logging.DEBUG,
-        uavcan.diagnostic.Severity_1.INFO: logging.INFO,
-        uavcan.diagnostic.Severity_1.NOTICE: 25,  # INFO + 25
-        uavcan.diagnostic.Severity_1.WARNING: logging.WARNING,
-        uavcan.diagnostic.Severity_1.ERROR: logging.ERROR,
-        uavcan.diagnostic.Severity_1.CRITICAL: logging.CRITICAL,
-        uavcan.diagnostic.Severity_1.ALERT: 60,  # CRITICAL + 10
-    }
-
-    @staticmethod
-    def _patch_log_levels_in_python_logging_module() -> None:
-        """Patch the Python logging module to add log levels for UAVCAN severity levels."""
-        TRACE = Client._UAVCAN_SEVERITY_TO_PYTHON[uavcan.diagnostic.Severity_1.TRACE]
-        NOTICE = Client._UAVCAN_SEVERITY_TO_PYTHON[uavcan.diagnostic.Severity_1.NOTICE]
-        ALERT = Client._UAVCAN_SEVERITY_TO_PYTHON[uavcan.diagnostic.Severity_1.ALERT]
-
-        assert logging.NOTSET < TRACE < logging.DEBUG, "TRACE level must be between NOTSET and DEBUG"
-        assert logging.INFO < NOTICE < logging.WARNING, "NOTICE level must be between INFO and WARNING"
-        assert logging.CRITICAL < ALERT, "ALERT level must be greater than CRITICAL"
-
-        logging.addLevelName(TRACE, "TRACE")
-        logging.addLevelName(NOTICE, "NOTICE")
-        logging.addLevelName(ALERT, "ALERT")
-
-
-Client._patch_log_levels_in_python_logging_module()
