@@ -195,16 +195,25 @@ class Registry:
         for reg in self:
             _logger.debug("Node %i has a register %s", self.node_id, reg)
 
-    async def refresh_register(self, name: Union[uavcan.register.Name_1, str, bytes], full: bool = False) -> bool:
+    async def refresh_all(self) -> None:
+        """Reset and re-initialize the entire registry."""
+        self._registers.clear()
+        await self.discover_registers()
+
+    async def refresh_register(
+        self, name: Union[uavcan.register.Name_1, str, bytes], full: bool = False, raise_on_error: bool = True
+    ) -> None:
         """Refresh a single register's value and metadata from the remote node.
 
         Args:
             name: The name of the register to refresh. Can be a string, bytes, or UAVCAN Name type.
             full: If True, refresh all metadata (min/max/default values) as well as the value.
                 If False, only refresh the value.
+            raise_on_error: If True, raise a RuntimeError if the register does not exist.
+                If False, just log a warning and return.
 
-        Returns:
-            True if the register was refreshed successfully, False otherwise. Usually this means the register does not
+        Raises:
+            RuntimeError: The register was not successfully refreshed. Usually this means the register does not
                 exist on the remote node.
         """
         self._check_node_id()
@@ -212,14 +221,13 @@ class Registry:
             name = uavcan.register.Name_1(name)
         if full:
             basename = Register._get_basename(name)
-            if not await self.refresh_register(basename, full=False):
-                return False
+            await self.refresh_register(basename, full=False, raise_on_error=raise_on_error)  # may raise RuntimeError
             await asyncio.gather(
-                self.refresh_register(f"{basename}<", full=False),
-                self.refresh_register(f"{basename}>", full=False),
-                self.refresh_register(f"{basename}=", full=False),
+                self.refresh_register(f"{basename}<", full=False, raise_on_error=False),
+                self.refresh_register(f"{basename}>", full=False, raise_on_error=False),
+                self.refresh_register(f"{basename}=", full=False, raise_on_error=False),
             )
-            return True
+            return
 
         command = uavcan.register.Access_1.Request(name)
         async with self._access_client() as client:
@@ -230,22 +238,21 @@ class Registry:
                 _logger.debug("%s (%i) to node %i failed", command, _attempt, self.node_id)
         if result is None:
             # none of the {up to N} attempts returned a result
-            _logger.info("Access to register %s of node %i failed", Register._parse_name(name), self.node_id)
-            return False
+            if raise_on_error:
+                raise RuntimeError(f"Access to register {name} of node {self.node_id} failed")
+            _logger.warning("Access to register %s of node %i failed", Register._parse_name(name), self.node_id)
+            return
+
         response: uavcan.register.Access_1.Response = result[0]
 
-        if not isinstance(response.value.empty, uavcan.primitive.Empty_1):
+        if response.value.empty is None:
+            # when _empty_ is None, it means another union member is not None, meaning we received a useful value
             self._insert(name, response)
-            return True
-
-        # register does not exist
-        name_str = name.name.tobytes().decode()
-        if name_str == Register._get_basename(name):
-            _logger.info("Register %s does not exist on node %i", name_str, self.node_id)
         else:
-            # don't log non-existence of meta (min/max/default) registers
-            pass
-        return False
+            # we got a response, but the register does not exist
+            assert isinstance(response.value.empty, uavcan.primitive.Empty_1)
+            name_str = name.name.tobytes().decode()
+            _logger.info("Register %s does not exist on node %i", name_str, self.node_id)
 
     @staticmethod
     def _check_key(key: Any) -> None:
@@ -606,8 +613,8 @@ class Register:
         """
         if not self.has_default:
             warnings.warn(f"{self.name} has no default value, therefore reset_value() has no effect")
-            return
-        await self.reset_value(self.default)
+            return False
+        return await self.set_value(self.default)
 
     @contextlib.asynccontextmanager
     async def temporary_value(self, value: NativeValue) -> AsyncGenerator[None, None]:
