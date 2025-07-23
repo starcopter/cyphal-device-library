@@ -1,18 +1,18 @@
+import importlib.metadata
+import logging
+from datetime import datetime
 from typing import Annotated
 
 import typer
 from dotenv import load_dotenv
 
-import logging
-
-from . import dsdl
-from . import version
-from ._util import configure_logging, set_default_usbtingo_env_vars
 from ..client import Client
+from ..util.dsdl import get_output_directory
+from . import dsdl
+from ._util import configure_logging, set_default_usbtingo_env_vars
 
 app = typer.Typer()
 app.add_typer(dsdl.app)
-app.add_typer(version.app)
 
 try:
     from . import discover, update
@@ -73,3 +73,19 @@ def main(
 
     presentation_publisher_logger = logging.getLogger("pycyphal.presentation._port._publisher")
     presentation_publisher_logger.addFilter(PresentationPublishFilter())
+
+
+@app.command()
+def version():
+    """Print the version of the CLI."""
+
+    __version__ = importlib.metadata.version("cyphal-device-library")
+
+    typer.echo(f"This is cyphal-device-library version {__version__}")
+
+    dsdl_dir = get_output_directory()
+    if dsdl_dir.is_dir():
+        last_updated = datetime.fromtimestamp(dsdl_dir.stat().st_ctime).replace(microsecond=0)
+        typer.echo(f"DSDL files compiled to {dsdl_dir}, last updated {last_updated}")
+    else:
+        typer.echo("DSDL files not compiled yet. Run `cyphal install` to compile them.")
