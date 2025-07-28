@@ -9,9 +9,6 @@ from typing import AsyncGenerator, Type, TypeVar
 import pycyphal
 import pycyphal.application
 import uavcan.node
-import uavcan.primitive
-import uavcan.primitive.array
-import uavcan.register
 
 from .client import Client
 from .registry import NativeValue, Registry
@@ -21,11 +18,11 @@ MessageClass = TypeVar("MessageClass")
 
 
 class Device:
-    def __init__(self, client: Client, dut: int, discover_registers: bool | list[str] = True) -> None:
+    def __init__(self, client: Client, node_id: int, discover_registers: bool | list[str] = True) -> None:
         self.client = client
         self.registry = Registry(None, self.client.node.make_client)
 
-        self.dut = dut
+        self.node_id = node_id
         self._initialized = asyncio.Event()
         self._info: uavcan.node.GetInfo_1.Response | None = None
 
@@ -51,27 +48,27 @@ class Device:
         await self.client.__aexit__(None, None, None)
 
     @property
-    def dut(self) -> int:
+    def node_id(self) -> int:
         """Device Under Test Node ID."""
-        return self._dut
+        return self._node_id
 
-    @dut.setter
-    def dut(self, value: int) -> None:
+    @node_id.setter
+    def node_id(self, value: int) -> None:
         if value == self.client.node.id:
             raise ValueError("Device under test cannot be the same as own node ID")
-        self._dut = value
+        self._node_id = value
         self.registry.node_id = value
 
     @property
     def info(self) -> uavcan.node.GetInfo_1.Response | None:
         """Node info, gathered from the node tracker."""
-        _, node_tracker_info = self.client.node_tracker.registry.get(self.dut, (None, None))
+        _, node_tracker_info = self.client.node_tracker.registry.get(self.node_id, (None, None))
         return node_tracker_info or self._info
 
     @property
     def heartbeat(self) -> uavcan.node.Heartbeat_1 | None:
         """Last received heartbeat."""
-        heartbeat, _ = self.client.node_tracker.registry.get(self.dut, (None, None))
+        heartbeat, _ = self.client.node_tracker.registry.get(self.node_id, (None, None))
         return heartbeat
 
     @property
@@ -86,7 +83,7 @@ class Device:
     async def get_info(self, refresh: bool = False) -> pycyphal.application.NodeInfo:
         """Wait for the node info of the device under test to be available."""
         if refresh or self._info is None:
-            self._info = await self.client.get_info(self.dut)
+            self._info = await self.client.get_info(self.node_id)
         return self._info
 
     async def get_app_name(self) -> str:
@@ -108,7 +105,7 @@ class Device:
         Returns:
             The response from the device under test.
         """
-        return await self.client.execute_command(command, server_node_id=self.dut)
+        return await self.client.execute_command(command, server_node_id=self.node_id)
 
     async def restart(self, wait: bool = True, timeout: float = 1.0) -> float:
         """Restart the device under test.
@@ -121,7 +118,7 @@ class Device:
             If `wait` is True, the time the DUT took to come back online.
             If `wait` is False, the time until the DUT took to respond to the request.
         """
-        return await self.client.restart_node(self.dut, wait, timeout)
+        return await self.client.restart_node(self.node_id, wait, timeout)
 
     async def update(self, image: Path, wait: bool = True, timeout: float = 5.0) -> float:
         """Update the firmware of the device under test.
@@ -134,7 +131,7 @@ class Device:
         Returns:
             float: Time taken for the update process to complete.
         """
-        return await self.client.update(self.dut, image, wait, timeout)
+        return await self.client.update(self.node_id, image, wait, timeout)
 
     async def write_register(self, register_name: str, value: NativeValue) -> NativeValue:
         """Write a value to a register on the device under test.
@@ -207,7 +204,7 @@ class Device:
         """
         register = self.registry["uavcan.node.id"]
         if await register.set_value(node_id):
-            self.dut = node_id
+            self.node_id = node_id
         else:
             raise RuntimeError(f"Failed to set node ID to {node_id}")
 

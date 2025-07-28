@@ -11,9 +11,6 @@ from typing import AsyncGenerator, Type, TypeVar
 import pycyphal
 import pycyphal.application
 import uavcan.node
-import uavcan.primitive
-import uavcan.primitive.array
-import uavcan.register
 from pycyphal.application.node_tracker import Entry
 
 from .client import Client
