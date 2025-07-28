@@ -3,9 +3,10 @@
 import asyncio
 
 import rich
-import rich.padding
-import rich.table
 import typer
+from rich.padding import Padding
+from rich.pretty import Pretty
+from rich.table import Column, Table
 
 from ..client import Client
 from ..registry import Registry
@@ -13,12 +14,12 @@ from ..registry import Registry
 app = typer.Typer()
 
 
-def format_registry(registry: Registry, title: str | None = None) -> rich.table.Table:
-    table = rich.table.Table(
+def format_registry(registry: Registry, title: str | None = None) -> Table:
+    table = Table(
         "Name",
         "Type",
         "Value",
-        rich.table.Column("Flags", justify="right"),
+        Column("Flags", justify="right"),
         title=title or f"Registry for node ID {registry.node_id}",
         caption="Flags: '<' has min, '>' has max, '=' has default, 'M' mutable, 'P' persistent",
     )
@@ -33,7 +34,7 @@ def format_registry(registry: Registry, title: str | None = None) -> rich.table.
                 "P" if register.persistent else " ",
             ]
         ).lstrip()
-        table.add_row(register.name, register.dtype, str(register.value), flags)
+        table.add_row(register.name, register.dtype, Pretty(register.value), flags)
 
     return table
 
@@ -44,7 +45,7 @@ async def async_print_registry(node_id: int):
         await registry.discover_registers()
         table = format_registry(registry)
 
-        rich.print(rich.padding.Padding(table, (0, 1)))
+        rich.print(Padding(table, (1, 1)))
 
 
 @app.command("print-registry")
