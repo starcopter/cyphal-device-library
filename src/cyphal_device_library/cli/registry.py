@@ -1,4 +1,4 @@
-"""Simple CLI command to discover and display Cyphal nodes on the network."""
+"""CLI command to display the registry of a given node."""
 
 import asyncio
 
@@ -16,11 +16,9 @@ app = typer.Typer()
 
 
 def format_registry(registry: Registry, title: str | None = None) -> Table:
+    """Format the registry into a human-readable table."""
     table = Table(
-        "Name",
-        "Type",
-        "Value",
-        Column("Flags", justify="right"),
+        *["Name", "Type", "Value", Column("Flags", justify="right")],
         title=title or f"Registry for node ID {registry.node_id}",
     )
 
@@ -45,7 +43,7 @@ def format_registry(registry: Registry, title: str | None = None) -> Table:
 
 
 async def async_print_registry(node_id: int):
-    with Client("com.starcopter.foo") as client:
+    with Client("cyphal.print-registry") as client:
         registry = Registry(node_id, client.node.make_client)
         await registry.discover_registers()
         table = format_registry(registry)
