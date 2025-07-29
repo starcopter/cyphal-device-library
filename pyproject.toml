@@ -1,6 +1,6 @@
 [project]
 name = "cyphal-device-library"
-version = "0.4.3"
+version = "0.4.4"
 description = "Library to simplify Interaction with Cyphal Devices"
 readme = "README.md"
 authors = [
@@ -45,7 +45,7 @@ extend-ignore-identifiers-re = [
 ]
 
 [tool.bumpversion]
-current_version = "0.4.3"
+current_version = "0.4.4"
 parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
 serialize = ["{major}.{minor}.{patch}"]
 search = "{current_version}"
@@ -56,7 +56,7 @@ ignore_missing_files = false
 tag = true
 sign_tags = false
 tag_name = "v{new_version}"
-tag_message = "🔖 Bump version: {current_version} → {new_version}"
+tag_message = "🔖 {new_version}"
 allow_dirty = false
 commit = true
 message = "🔖 Bump version: {current_version} → {new_version}"
