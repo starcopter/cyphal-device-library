@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 import rich.console
 import rich.prompt
+from rich.padding import Padding
 
 if TYPE_CHECKING:
     from pycyphal.transport.can import CANTransport
@@ -84,6 +85,20 @@ def make_can_transport(iface: str, bitrate: int | list[int], node_id: int) -> "C
         "uavcan.node.id": ValueProxy(Natural16([node_id])),
     }
     return make_transport(config)
+
+
+def spaces_to_padding(text: str) -> Padding:
+    """Convert leading and trailing spaces in a string to padding.
+
+    Args:
+        text: The input string that may contain leading and/or trailing spaces
+
+    Returns:
+        A Padding object with the text content, with leading and trailing spaces converted to padding
+    """
+    trailing_spaces = len(text) - len(text.rstrip())
+    leading_spaces = len(text) - len(text.lstrip())
+    return Padding(text.strip(), (0, trailing_spaces, 0, leading_spaces))
 
 
 async def async_prompt(prompt: rich.prompt.PromptBase[T], default: T = ...) -> T:

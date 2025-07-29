@@ -36,6 +36,7 @@ import time
 import warnings
 from collections import defaultdict
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncContextManager,
     AsyncGenerator,
@@ -52,6 +53,10 @@ import pycyphal.presentation
 import uavcan.primitive
 import uavcan.primitive.array
 import uavcan.register
+
+if TYPE_CHECKING:
+    from rich.table import Table
+
 
 _logger = logging.getLogger(__name__)
 ServiceClass = TypeVar("ServiceClass")
@@ -226,6 +231,9 @@ class Registry:
         self._check_key(key)
         self._registers[key] = value
 
+    def __len__(self) -> int:
+        return len(self._registers)
+
     def __iter__(self) -> Iterator["Register"]:
         yield from self._registers.values()
 
@@ -236,6 +244,46 @@ class Registry:
     def __delitem__(self, key: str) -> None:
         self._check_key(key)
         del self._registers[key]
+
+    def __repr__(self) -> str:
+        return f"Registry(node_id={self.node_id}), {len(self)} registers>"
+
+    def __str__(self) -> str:
+        registers = "".join(f"\n- {reg}" for reg in self)
+        return f"Registry for node {self.node_id} ({len(self)} registers).{registers}"
+
+    def __rich__(self) -> "Table":
+        from rich.pretty import Pretty
+        from rich.table import Column, Table
+
+        from .util import spaces_to_padding
+
+        table = Table(
+            *["Name", "Type", "Value", Column("Flags", justify="right")],
+            title=f"Registry for node ID {self.node_id} ({len(self)} registers)",
+        )
+
+        flags: dict[str, str] = {
+            "<": "has_min",
+            ">": "has_max",
+            "=": "has_default",
+            "M": "mutable",
+            "P": "persistent",
+        }
+        used_flags: set[str] = set()
+
+        for register in self:
+            reg_flags = " ".join([(flag if getattr(register, attr) else " ") for flag, attr in flags.items()]).lstrip()
+            used_flags.update(*reg_flags.split())
+            table.add_row(register.name, register.dtype, Pretty(register.value), spaces_to_padding(reg_flags))
+
+        if used_flags:
+            flags_str = ", ".join(
+                f"'{flag}' {attr.replace('_', ' ')}" for flag, attr in flags.items() if flag in used_flags
+            )
+            table.caption = f"Flags: {flags_str}"
+
+        return table
 
     async def _yield_client(
         self, dtype: Type[ServiceClass]
