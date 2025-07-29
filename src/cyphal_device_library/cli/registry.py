@@ -22,20 +22,24 @@ def format_registry(registry: Registry, title: str | None = None) -> Table:
         "Value",
         Column("Flags", justify="right"),
         title=title or f"Registry for node ID {registry.node_id}",
-        caption="Flags: '<' has min, '>' has max, '=' has default, 'M' mutable, 'P' persistent",
     )
 
+    flags: dict[str, str] = {
+        "<": "has_min",
+        ">": "has_max",
+        "=": "has_default",
+        "M": "mutable",
+        "P": "persistent",
+    }
+    used_flags: set[str] = set()
+
     for register in registry:
-        flags = " ".join(
-            [
-                "<" if register.has_min else " ",
-                ">" if register.has_max else " ",
-                "=" if register.has_default else " ",
-                "M" if register.mutable else " ",
-                "P" if register.persistent else " ",
-            ]
-        ).lstrip()
-        table.add_row(register.name, register.dtype, Pretty(register.value), spaces_to_padding(flags))
+        reg_flags = " ".join([(flag if getattr(register, attr) else " ") for flag, attr in flags.items()]).lstrip()
+        used_flags.update(*reg_flags.split())
+        table.add_row(register.name, register.dtype, Pretty(register.value), spaces_to_padding(reg_flags))
+
+    if used_flags:
+        table.caption = f"Flags: {', '.join(f"'{flag}' {flags[flag].replace('_', ' ')}" for flag in used_flags)}"
 
     return table
 
@@ -46,7 +50,7 @@ async def async_print_registry(node_id: int):
         await registry.discover_registers()
         table = format_registry(registry)
 
-        rich.print(Padding(table, (1, 1)))
+        rich.print(Padding(table, (1, 2)))
 
 
 @app.command("print-registry")
