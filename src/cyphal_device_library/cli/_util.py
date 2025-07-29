@@ -5,6 +5,7 @@ from enum import IntEnum
 
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.padding import Padding
 
 _logger = logging.getLogger(__name__)
 
@@ -109,6 +110,20 @@ def set_default_usbtingo_env_vars() -> None:
     os.environ.setdefault("UAVCAN__CAN__IFACE", "usbtingo:")
     os.environ.setdefault("UAVCAN__CAN__MTU", "64")
     os.environ.setdefault("UAVCAN__CAN__BITRATE", "1000000 5000000")
+
+
+def spaces_to_padding(text: str) -> Padding:
+    """Convert leading and trailing spaces in a string to padding.
+
+    Args:
+        text: The input string that may contain leading and/or trailing spaces
+
+    Returns:
+        A Padding object with the text content, with leading and trailing spaces converted to padding
+    """
+    trailing_spaces = len(text) - len(text.rstrip())
+    leading_spaces = len(text) - len(text.lstrip())
+    return Padding(text.strip(), (0, trailing_spaces, 0, leading_spaces))
 
 
 _RE_JSON_LIST = re.compile(r"^\s*\[([^]]*)]\s*$")

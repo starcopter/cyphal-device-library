@@ -10,6 +10,7 @@ from rich.table import Column, Table
 
 from ..client import Client
 from ..registry import Registry
+from ._util import spaces_to_padding
 
 app = typer.Typer()
 
@@ -34,7 +35,7 @@ def format_registry(registry: Registry, title: str | None = None) -> Table:
                 "P" if register.persistent else " ",
             ]
         ).lstrip()
-        table.add_row(register.name, register.dtype, Pretty(register.value), flags)
+        table.add_row(register.name, register.dtype, Pretty(register.value), spaces_to_padding(flags))
 
     return table
 
