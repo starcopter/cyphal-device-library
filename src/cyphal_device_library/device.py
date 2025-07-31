@@ -39,6 +39,19 @@ class Device:
 
         asyncio.get_event_loop().create_task(initialize())
 
+    @classmethod
+    async def discover(
+        cls,
+        client: Client,
+        name: str | None = None,
+        uid: str | bytes | None = None,
+        *,
+        timeout: float = 3.0,
+        **kwargs,
+    ) -> "Device":
+        node_id = await discover_device_node_id(client, name, uid, timeout=timeout)
+        return cls(client, node_id, **kwargs)
+
     async def __aenter__(self) -> "Device":
         await self.client.__aenter__()
         await self._initialized.wait()
@@ -303,3 +316,75 @@ class Device:
         port_type = self._get_port_type(port_name)
 
         return self.node.make_subscriber(port_type, port_id)
+
+
+async def discover_device_node_id(
+    client: Client,
+    name: str | None = None,
+    uid: str | bytes | None = None,
+    *,
+    timeout: float = 3.0,
+) -> int:
+    """Discover a device on the network when its node ID is not known.
+
+    Args:
+        client: The client to use to discover the device.
+        name: The name of the device to discover.
+        uid: The unique ID of the device to discover.
+    """
+    from pycyphal.application.node_tracker import Entry
+
+    if not name and not uid:
+        raise ValueError("Either name or UID must be provided")
+    if isinstance(uid, str):
+        uid: bytes = bytes.fromhex(uid)
+
+    loop = asyncio.get_event_loop()
+    fut_node_id: asyncio.Future[int] = loop.create_future()
+
+    def _matches(entry: Entry) -> bool:
+        if name is not None and entry.info.name.tobytes().decode() != name:
+            return False
+        if uid is not None and entry.info.unique_id.tobytes() != uid:
+            return False
+
+        return True
+
+    def _discover(node_id: int, _old: Entry | None, entry: Entry | None) -> None:
+        if fut_node_id.done() or entry is None or entry.info is None:
+            return
+
+        if _matches(entry):
+            fut_node_id.set_result(node_id)
+
+    for node_id, entry in client.node_tracker.registry.items():
+        if _matches(entry):
+            # matching device already in the registry, no need to wait
+            dut_node_id = node_id
+            break
+    else:
+        # no matching device known yet, wait for it to appear
+        client.node_tracker.add_update_handler(_discover)
+        try:
+            dut_node_id = await asyncio.wait_for(fut_node_id, timeout)
+
+        except asyncio.TimeoutError as ex:
+            attrs = []
+            if name is not None:
+                attrs.append(f"name={name}")
+            if uid is not None:
+                attrs.append(f"UID={uid.hex()}")
+            raise TimeoutError(f"Failed to discover device with {', '.join(attrs)} within {timeout} seconds") from ex
+
+        finally:
+            client.node_tracker.remove_update_handler(_discover)
+
+    entry = client.node_tracker.registry[dut_node_id]
+    logger.info(
+        "Found device under test: node ID %d, name %s, UID %s",
+        dut_node_id,
+        entry.info.name.tobytes().decode(),
+        entry.info.unique_id.tobytes().hex(),
+    )
+
+    return dut_node_id
