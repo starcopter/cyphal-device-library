@@ -193,6 +193,31 @@ class Client:
 
         return ", ".join(info_list)
 
+    async def get_info(self, node_id: int) -> uavcan.node.GetInfo_1.Response:
+        """Request information about a remote node.
+
+        This method is completely independent from the NodeTracker.
+
+        Args:
+            node_id: The ID of the node to request information about.
+
+        Returns:
+            The response from the remote node.
+
+        Raises:
+            TimeoutError: If the request times out.
+        """
+        request = uavcan.node.GetInfo_1.Request()
+        client = self.node.make_client(uavcan.node.GetInfo_1, node_id)
+        try:
+            result = await client.call(request)
+            if result is None:
+                raise TimeoutError(f"GetInfo request to node {node_id} timed out")
+            response, _meta = result
+            return response
+        finally:
+            client.close()
+
     async def execute_command(
         self, command: uavcan.node.ExecuteCommand_1.Request, server_node_id: int
     ) -> uavcan.node.ExecuteCommand_1.Response:
