@@ -12,3 +12,7 @@ wheels/
 # Secrets and logs
 .env
 *.log
+
+# Temporary files
+/foo.py
+/test.py

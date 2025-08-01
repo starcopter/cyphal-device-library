@@ -68,6 +68,13 @@ class DeviceClient(Client):
             transport: The transport to use for the client. If not specified, the client will read
                 transport information from environment variables.
         """
+        _warning_message = (
+            "The DeviceClient() class is deprecated and scheduled for deletion in cyphal-device-library v0.7. "
+            "Please migrate to the Client() class in combination with a single Device() instance."
+        )
+        warnings.warn(_warning_message, DeprecationWarning, stacklevel=2)
+        logger.warning(_warning_message)
+
         super().__init__(name or self.DEFAULT_NAME, transport=transport)
         assert self.node.id is not None, "node must not be anonymous"
 
