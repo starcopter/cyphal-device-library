@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import AsyncGenerator, Type, TypeVar
 
 import pycyphal
-import pycyphal.application
 import uavcan.node
 
 from .client import Client
