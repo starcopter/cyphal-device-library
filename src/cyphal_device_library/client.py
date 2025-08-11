@@ -7,6 +7,7 @@ import logging
 import shutil
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Self
 
 import pycyphal
 import pycyphal.application
@@ -116,7 +117,7 @@ class Client:
         self.logger.debug("closing Python node")
         self.node.close()
 
-    def __enter__(self) -> "Client":
+    def __enter__(self) -> Self:
         """Context manager entry point.
 
         Returns:
@@ -138,7 +139,7 @@ class Client:
         if self._nested_contexts == 0:
             self.close()
 
-    async def __aenter__(self) -> "Client":
+    async def __aenter__(self) -> Self:
         return self.__enter__()
 
     async def __aexit__(self, exc_type, exc_value, traceback) -> None:
