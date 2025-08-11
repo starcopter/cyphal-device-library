@@ -528,7 +528,7 @@ class Device:
         port_id = self._get_port_id(port_name)
         port_type = self._get_port_type(port_name)
 
-        return self.node.make_subscriber(port_type, port_id)
+        return self.client.node.make_subscriber(port_type, port_id)
 
 
 async def discover_device_node_id(
