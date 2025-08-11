@@ -38,3 +38,19 @@ def patch_log_levels_in_python_logging_module() -> None:
     logging.addLevelName(TRACE, "TRACE")
     logging.addLevelName(NOTICE, "NOTICE")
     logging.addLevelName(ALERT, "ALERT")
+
+
+class Errno105Filter(logging.Filter):
+    """Filter out log messages that contain '[Errno 105] No buffer space available.'
+
+    This can be used to suppress pycyphal errors that would otherwise spam the logs.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "[Errno 105] No buffer space available" not in record.getMessage()
+
+    @staticmethod
+    def apply_to(logger_or_handler: str | logging.Logger | logging.Handler) -> None:
+        if not isinstance(logger_or_handler, (logging.Logger, logging.Handler)):
+            logger_or_handler = logging.getLogger(logger_or_handler)
+        logger_or_handler.addFilter(Errno105Filter())
