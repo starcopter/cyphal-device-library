@@ -3,7 +3,7 @@ import contextlib
 import importlib
 import logging
 import re
-from collections.abc import AsyncGenerator, Iterable
+from collections.abc import AsyncGenerator, Container, Iterable
 from pathlib import Path
 from typing import Self, Type, TypeVar
 
@@ -44,6 +44,20 @@ class Device:
         ...     await Device.discover(client, name="com.starcopter.highdra.bms") as device,
         ... ):
         ...     print(await device.get_info())
+    """
+
+    DEFAULT_NAME: str | None = None
+    """Device name, used for discovery.
+
+    This is a class variable that can be overridden by subclasses to provide a default name for device discovery.
+    Has no effect outside of device discovery, has no effect if overridden by the `name` argument to Device.discover().
+    """
+
+    DEFAULT_RESTART_TIMEOUT: float = 1.0
+    """Default timeout to wait for the device to come back online after restart.
+
+    This is a class variable that can be overridden by subclasses to provide a default timeout for device restart.
+    Has no effect outside of device restart, has no effect if overridden by the `timeout` argument to Device.restart().
     """
 
     def __init__(
@@ -88,12 +102,23 @@ class Device:
 
         asyncio.get_event_loop().create_task(initialize())
 
+    async def wait_for_initialization(self, timeout: float | None = None) -> None:
+        """Wait for the device to be initialized.
+
+        Args:
+            timeout: Maximum time in seconds to wait for the device to be initialized.
+                If `None`, wait indefinitely.
+        """
+        async with asyncio.timeout(timeout):
+            await self._initialized.wait()
+
     @classmethod
     async def discover(
         cls,
         client: Client,
         name: str | None = None,
         uid: str | bytes | None = None,
+        exclude_uids: Container[str | bytes] | None = None,
         *,
         timeout: float = 3.0,
         **kwargs,
@@ -107,6 +132,7 @@ class Device:
             client: The Client instance to use for communication.
             name: The name of the device to discover. If provided, the first device with a matching name will be used.
             uid: The unique ID of the device to discover. Can be provided as a string (hex format) or bytes.
+            exclude_uids: A container (set, list, ...) of unique IDs to exclude from discovery.
             timeout: Maximum time in seconds to wait for device discovery.
             **kwargs: Additional arguments to pass to the Device constructor.
 
@@ -133,7 +159,7 @@ class Device:
             ...     print(mmb.registry)
             ...     print(telega.registry)
         """
-        node_id = await discover_device_node_id(client, name, uid, timeout=timeout)
+        node_id = await discover_device_node_id(client, name or cls.DEFAULT_NAME, uid, exclude_uids, timeout=timeout)
         return cls(client, node_id, **kwargs)
 
     async def __aenter__(self) -> Self:
@@ -151,7 +177,7 @@ class Device:
             ...     print(device.registry)
         """
         await self.client.__aenter__()
-        await self._initialized.wait()
+        await self.wait_for_initialization()
         return self
 
     async def __aexit__(self, exc_t, exc_v, exc_tb) -> None:
@@ -253,7 +279,7 @@ class Device:
         """
         return await self.client.execute_command(command, server_node_id=self.node_id)
 
-    async def restart(self, wait: bool = True, timeout: float = 1.0) -> float:
+    async def restart(self, wait: bool = True, timeout: float | None = None) -> float:
         """Restart the device.
 
         This method sends a restart command to the device and optionally waits for it to come back online.
@@ -275,7 +301,7 @@ class Device:
             Device restarted in 1.23 seconds
         """
         # TODO: clear (refresh?) the registry, else it will contain stale information
-        return await self.client.restart_node(self.node_id, wait, timeout)
+        return await self.client.restart_node(self.node_id, wait, timeout or self.DEFAULT_RESTART_TIMEOUT)
 
     async def update(self, image: Path, wait: bool = True, timeout: float = 5.0) -> float:
         """Update the firmware of the device.
@@ -535,6 +561,7 @@ async def discover_device_node_id(
     client: Client,
     name: str | None = None,
     uid: str | bytes | None = None,
+    exclude_uids: Container[str | bytes] | None = None,
     *,
     timeout: float = 3.0,
 ) -> int:
@@ -547,6 +574,7 @@ async def discover_device_node_id(
         client: The client to use for discovering the device.
         name: The name of the device to discover. If provided, the first device with a matching name will be returned.
         uid: The unique ID of the device to discover. Can be provided as a string (hex format) or bytes.
+        exclude_uids: A container (set, list, ...) of unique IDs to exclude from discovery.
         timeout: Maximum time in seconds to wait for device discovery.
 
     Returns:
@@ -581,6 +609,8 @@ async def discover_device_node_id(
         if name is not None and entry.info.name.tobytes().decode() != name:
             return False
         if uid is not None and entry.info.unique_id.tobytes() != uid:
+            return False
+        if exclude_uids is not None and entry.info.unique_id.tobytes() in exclude_uids:
             return False
 
         return True
