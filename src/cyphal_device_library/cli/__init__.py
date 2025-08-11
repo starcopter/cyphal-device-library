@@ -7,7 +7,7 @@ import typer
 from dotenv import load_dotenv
 
 from ..util.dsdl import get_output_directory
-from ..util.logging import UAVCAN_SEVERITY_TO_PYTHON
+from ..util.logging import UAVCAN_SEVERITY_TO_PYTHON, Errno105Filter
 from . import dsdl
 from ._util import configure_logging, set_default_usbtingo_env_vars
 
@@ -48,31 +48,10 @@ def main(
     diagnost_record_logger = logging.getLogger("uavcan.diagnostic.record")
     diagnost_record_logger.setLevel(UAVCAN_SEVERITY_TO_PYTHON[7 - diagnostic_record_verbosity])
     level_name = logging.getLevelName(diagnost_record_logger.level)
-    print(f"[-d|--diagnostic] Setting diagnostic record verbosity to {level_name}")
+    logging.debug(f"[-d|--diagnostic] Setting diagnostic record verbosity to {level_name}")
 
-    # Suppress heartbeat publisher errors (e.g. no cyphal node receive CAN messages)
-    class HeartbeatExceptionFilter(logging.Filter):
-        def filter(self, record):
-            if "publisher task exception:" in record.getMessage():
-                if "[Errno 105] No buffer space available" in record.getMessage():
-                    # print("[Errno 105] Heartbeat Publish: no buffer space available")
-                    return False
-            return True
-
-    heartbeat_publish_logger = logging.getLogger("pycyphal.application.heartbeat_publisher")
-    heartbeat_publish_logger.addFilter(HeartbeatExceptionFilter())
-
-    # Suppress publisher port errors (e.g. no cyphal node receive CAN messages)
-    class PresentationPublishFilter(logging.Filter):
-        def filter(self, record):
-            if "deferred publication has failed" in record.getMessage():
-                if "[Errno 105] No buffer space available" in record.getMessage():
-                    # print("[Errno 105] Presentation Layer Publish: no buffer space available")
-                    return False
-            return True
-
-    presentation_publisher_logger = logging.getLogger("pycyphal.presentation._port._publisher")
-    presentation_publisher_logger.addFilter(PresentationPublishFilter())
+    Errno105Filter.apply_to("pycyphal.application")
+    Errno105Filter.apply_to("pycyphal.presentation")
 
 
 @app.command()
