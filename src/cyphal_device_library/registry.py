@@ -219,14 +219,14 @@ class Registry:
         self._check_node_id()
         if not isinstance(name, uavcan.register.Name_1):
             name = uavcan.register.Name_1(name)
+        basename: str = Register._get_basename(name)
+        name_str = Register._parse_name(name)
         if full:
-            basename = Register._get_basename(name)
             await self.refresh_register(basename, full=False, raise_on_error=raise_on_error)  # may raise RuntimeError
-            await asyncio.gather(
-                self.refresh_register(f"{basename}<", full=False, raise_on_error=False),
-                self.refresh_register(f"{basename}>", full=False, raise_on_error=False),
-                self.refresh_register(f"{basename}=", full=False, raise_on_error=False),
-            )
+            async with asyncio.TaskGroup() as tg:
+                tg.create_task(self.refresh_register(f"{basename}<", full=False, raise_on_error=False))
+                tg.create_task(self.refresh_register(f"{basename}>", full=False, raise_on_error=False))
+                tg.create_task(self.refresh_register(f"{basename}=", full=False, raise_on_error=False))
             return
 
         command = uavcan.register.Access_1.Request(name)
@@ -240,7 +240,7 @@ class Registry:
             # none of the {up to N} attempts returned a result
             if raise_on_error:
                 raise RuntimeError(f"Access to register {name} of node {self.node_id} failed")
-            _logger.warning("Access to register %s of node %i failed", Register._parse_name(name), self.node_id)
+            _logger.error("Access to register %s of node %i failed", name_str, self.node_id)
             return
 
         response: uavcan.register.Access_1.Response = result[0]
@@ -251,8 +251,15 @@ class Registry:
         else:
             # we got a response, but the register does not exist
             assert isinstance(response.value.empty, uavcan.primitive.Empty_1)
-            name_str = name.name.tobytes().decode()
-            _logger.info("Register %s does not exist on node %i", name_str, self.node_id)
+            if basename != name_str:
+                # This is likely a guess to access a min/max/default value, which should not crash
+                _logger.debug("Register %s does not exist on node %i", name_str, self.node_id)
+            else:
+                # Basename does not exist, this should be logged with higher severity
+                if raise_on_error:
+                    raise RuntimeError(f"Register {name_str} does not exist on node {self.node_id}")
+                _logger.error("Register %s does not exist on node %i", name_str, self.node_id)
+                return
 
     @staticmethod
     def _check_key(key: Any) -> None:
@@ -308,7 +315,7 @@ class Registry:
         }
         used_flags: set[str] = set()
 
-        for register in self:
+        for register in sorted(self, key=lambda r: r.name.lower()):
             reg_flags = " ".join([(flag if getattr(register, attr) else " ") for flag, attr in flags.items()]).lstrip()
             used_flags.update(*reg_flags.split())
             table.add_row(register.name, register.dtype, Pretty(register.value), spaces_to_padding(reg_flags))
