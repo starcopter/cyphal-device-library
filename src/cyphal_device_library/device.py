@@ -3,8 +3,9 @@ import contextlib
 import importlib
 import logging
 import re
+from collections.abc import AsyncGenerator, Iterable
 from pathlib import Path
-from typing import AsyncGenerator, Type, TypeVar
+from typing import Self, Type, TypeVar
 
 import pycyphal
 import uavcan.node
@@ -45,7 +46,12 @@ class Device:
         ...     print(await device.get_info())
     """
 
-    def __init__(self, client: Client, node_id: int, discover_registers: bool | list[str] = True) -> None:
+    def __init__(
+        self,
+        client: Client,
+        node_id: int,
+        discover_registers: bool | Iterable[str] = True,
+    ) -> None:
         """Initialize a new Device instance.
 
         Args:
@@ -72,7 +78,7 @@ class Device:
         async def initialize():
             async with asyncio.TaskGroup() as tg:
                 tg.create_task(self.get_info())
-                if isinstance(discover_registers, list):
+                if isinstance(discover_registers, Iterable):
                     for name in discover_registers:
                         tg.create_task(self.registry.refresh_register(name, full=True))
                 elif discover_registers:
@@ -91,7 +97,7 @@ class Device:
         *,
         timeout: float = 3.0,
         **kwargs,
-    ) -> "Device":
+    ) -> Self:
         """Discover a device on the network and create a Device instance for it.
 
         Search for a device on the network based on its name and/or UID, and return a Device instance configured to
@@ -130,7 +136,7 @@ class Device:
         node_id = await discover_device_node_id(client, name, uid, timeout=timeout)
         return cls(client, node_id, **kwargs)
 
-    async def __aenter__(self) -> "Device":
+    async def __aenter__(self) -> Self:
         """Async context manager entry point.
 
         This method ensures the client is properly started and the device is initialized
