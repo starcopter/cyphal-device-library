@@ -606,6 +606,8 @@ async def discover_device_node_id(
     fut_node_id: asyncio.Future[int] = loop.create_future()
 
     def _matches(entry: Entry) -> bool:
+        if entry.info is None:
+            return False
         if name is not None and entry.info.name.tobytes().decode() != name:
             return False
         if uid is not None and entry.info.unique_id.tobytes() != uid:
