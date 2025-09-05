@@ -52,7 +52,7 @@ class SoftwareFile:
             -
             (?P<hw_version>\d+\.\d+)      # Hardware version (required)
             -
-            (?P<sw_version>\d+\.\d+)      # Software version (required)
+            v?(?P<sw_version>\d+\.\d+)    # Software version (required)
             (?:\.(?P<vcs>[a-fA-F0-9]+))?  # Optional VCS hash
             (?:\.(?P<crc>[a-fA-F0-9]+))?  # Optional CRC
             \.app                         # Literal ".app"
@@ -279,14 +279,16 @@ async def execute_updates(
         node_crc = f"{info.software_image_crc[0]:016x}" if info.software_image_crc.size > 0 else ""
         node_mode = heartbeat.mode.value
         node_health = heartbeat.health.value
+        file_vcs = file.vcs or ""
+        file_crc = file.crc or ""
 
         table.add_row(
             str(node_id),
             info.name.tobytes().decode(),
             node_hw_version,
             f"{node_sw_version} → {file.sw_version}",
-            f"{node_vcs[:8] or '[italic]None[/italic]'} → {file.vcs[:8] or '[italic]None[/italic]'}",
-            f"{node_crc[:8] or '[italic]None[/italic]'} → {file.crc[:8] or '[italic]None[/italic]'}",
+            f"{node_vcs[:8] or '[italic]None[/italic]'} → {file_vcs[:8] or '[italic]None[/italic]'}",
+            f"{node_crc[:8] or '[italic]None[/italic]'} → {file_crc[:8] or '[italic]None[/italic]'}",
             MODE_NAMES[node_mode],
             HEALTH_NAMES[node_health],
         )

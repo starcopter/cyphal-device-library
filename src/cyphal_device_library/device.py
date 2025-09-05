@@ -46,10 +46,11 @@ class Device:
         ...     print(await device.get_info())
     """
 
-    DEFAULT_NAME: str | None = None
+    DEFAULT_NAME: str | Container[str] | None = None
     """Device name, used for discovery.
 
     This is a class variable that can be overridden by subclasses to provide a default name for device discovery.
+    In case multiple names are provided, a device will need to match any of the names.
     Has no effect outside of device discovery, has no effect if overridden by the `name` argument to Device.discover().
     """
 
@@ -116,7 +117,7 @@ class Device:
     async def discover(
         cls,
         client: Client,
-        name: str | None = None,
+        name: str | Container[str] | None = None,
         uid: str | bytes | None = None,
         exclude_uids: Container[str | bytes] | None = None,
         *,
@@ -559,7 +560,7 @@ class Device:
 
 async def discover_device_node_id(
     client: Client,
-    name: str | None = None,
+    name: str | Container[str] | None = None,
     uid: str | bytes | None = None,
     exclude_uids: Container[str | bytes] | None = None,
     *,
@@ -599,6 +600,8 @@ async def discover_device_node_id(
 
     if not name and not uid:
         raise ValueError("Either name or UID must be provided")
+    if isinstance(name, str):
+        name = {name}
     if isinstance(uid, str):
         uid: bytes = bytes.fromhex(uid)
 
@@ -608,7 +611,7 @@ async def discover_device_node_id(
     def _matches(entry: Entry) -> bool:
         if entry.info is None:
             return False
-        if name is not None and entry.info.name.tobytes().decode() != name:
+        if name is not None and entry.info.name.tobytes().decode() not in name:
             return False
         if uid is not None and entry.info.unique_id.tobytes() != uid:
             return False
