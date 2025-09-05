@@ -4,20 +4,24 @@
 
 import asyncio
 import logging
-import shutil
+from collections.abc import Callable, Sequence
+from functools import partial
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Self
 
+import numpy as np
 import pycyphal
 import pycyphal.application
 import uavcan.diagnostic
+import uavcan.file
 import uavcan.node
-from pycyphal.application.file import FileServer
+import uavcan.primitive
 from pycyphal.application.node_tracker import Entry, NodeTracker
 from pycyphal.application.plug_and_play import CentralizedAllocator
 
 from .util.logging import UAVCAN_SEVERITY_TO_PYTHON
+
+FILE_READ_MAX_SIZE = 256
 
 
 class Client:
@@ -77,14 +81,17 @@ class Client:
         self.node_tracker.get_info_priority = pycyphal.transport.Priority.LOW
         self.node_tracker.add_update_handler(self._log_node_changes)
 
-        tempdir = TemporaryDirectory(prefix="cyphal-")
-        self.node.add_lifetime_hooks(None, tempdir.cleanup)
-
-        self.file_server = FileServer(self.node, [Path(tempdir.name).resolve()])
+        self.firmware_images: dict[str, Sequence[bytes]] = {}
+        self.update_callbacks: dict[int, Callable[[int], None]] = {}
+        self.srv_file_read = self.node.get_server(uavcan.file.Read_1)
+        self.node.add_lifetime_hooks(
+            partial(self.srv_file_read.serve_in_background, self._serve_file_read),
+            self.srv_file_read.close,
+        )
 
         self.sub_diagnostic_record = self.node.make_subscriber(uavcan.diagnostic.Record_1)
         self.node.add_lifetime_hooks(
-            lambda: self.sub_diagnostic_record.receive_in_background(self._log_diagnostic_record),
+            partial(self.sub_diagnostic_record.receive_in_background, self._log_diagnostic_record),
             self.sub_diagnostic_record.close,
         )
 
@@ -356,7 +363,14 @@ class Client:
             except ValueError:
                 pass
 
-    async def update(self, node_id: int, image: Path | str, wait: bool = True, timeout: float = 10.0) -> float:
+    async def update(
+        self,
+        node_id: int,
+        image: Path | str,
+        wait: bool = True,
+        timeout: float = 10.0,
+        callback: Callable[[int], None] | None = None,
+    ) -> float:
         """Update the software on a remote node.
 
         Instruct a single node to update its software from a file.
@@ -382,51 +396,54 @@ class Client:
         """
         self.logger.info("Requesting an update to %s from node %i", image, node_id)
         loop = asyncio.get_event_loop()
-        root = self.file_server.roots[0]
-        image = Path(image).resolve()
-        if not image.is_relative_to(root):
-            shutil.copy(image, root / image.name)
-            image = root / image.name
-
-        assert image.is_relative_to(root), f"Image {image} is not a child of {root}"
+        image = Path(image)
+        self.firmware_images[image.name] = image.read_bytes()  # TODO: this will break with images with similar names
 
         async with self.update_semaphore:
+            if callback:
+                self.update_callbacks[node_id] = callback
+                self.logger.info("Update callback registered for node %i", node_id)
+
             t_start = loop.time()
-            response = await self.execute_command(
-                uavcan.node.ExecuteCommand_1.Request(
-                    uavcan.node.ExecuteCommand_1.Request.COMMAND_BEGIN_SOFTWARE_UPDATE,
-                    image.name,
-                ),
-                node_id,
-            )
-            t_response = loop.time()
-
-            if response.status != uavcan.node.ExecuteCommand_1.Response.STATUS_SUCCESS:
-                status_enum = {
-                    uavcan.node.ExecuteCommand_1.Response.STATUS_SUCCESS: "SUCCESS",
-                    uavcan.node.ExecuteCommand_1.Response.STATUS_FAILURE: "FAILURE",
-                    uavcan.node.ExecuteCommand_1.Response.STATUS_NOT_AUTHORIZED: "NOT AUTHORIZED",
-                    uavcan.node.ExecuteCommand_1.Response.STATUS_BAD_COMMAND: "BAD COMMAND",
-                    uavcan.node.ExecuteCommand_1.Response.STATUS_BAD_PARAMETER: "BAD PARAMETER",
-                    uavcan.node.ExecuteCommand_1.Response.STATUS_BAD_STATE: "BAD STATE",
-                    uavcan.node.ExecuteCommand_1.Response.STATUS_INTERNAL_ERROR: "INTERNAL ERROR",
-                }.get(response.status, "unknown")
-                self.logger.error(
-                    "Software update request failed in %.1f s with status %i: %s",
-                    t_response - t_start,
-                    response.status,
-                    status_enum,
+            try:
+                response = await self.execute_command(
+                    uavcan.node.ExecuteCommand_1.Request(
+                        uavcan.node.ExecuteCommand_1.Request.COMMAND_BEGIN_SOFTWARE_UPDATE,
+                        image.name,
+                    ),
+                    node_id,
                 )
-                raise RuntimeError(f"Software update request to node {node_id} failed: {status_enum}")
+                t_response = loop.time()
 
-            self.logger.info("Node %i responded to update request in %i ms", node_id, 1000 * (t_response - t_start))
+                if response.status != uavcan.node.ExecuteCommand_1.Response.STATUS_SUCCESS:
+                    status_enum = {
+                        uavcan.node.ExecuteCommand_1.Response.STATUS_SUCCESS: "SUCCESS",
+                        uavcan.node.ExecuteCommand_1.Response.STATUS_FAILURE: "FAILURE",
+                        uavcan.node.ExecuteCommand_1.Response.STATUS_NOT_AUTHORIZED: "NOT AUTHORIZED",
+                        uavcan.node.ExecuteCommand_1.Response.STATUS_BAD_COMMAND: "BAD COMMAND",
+                        uavcan.node.ExecuteCommand_1.Response.STATUS_BAD_PARAMETER: "BAD PARAMETER",
+                        uavcan.node.ExecuteCommand_1.Response.STATUS_BAD_STATE: "BAD STATE",
+                        uavcan.node.ExecuteCommand_1.Response.STATUS_INTERNAL_ERROR: "INTERNAL ERROR",
+                    }.get(response.status, "unknown")
+                    self.logger.error(
+                        "Software update request failed in %.1f s with status %i: %s",
+                        t_response - t_start,
+                        response.status,
+                        status_enum,
+                    )
+                    raise RuntimeError(f"Software update request to node {node_id} failed: {status_enum}")
 
-            if not wait:
-                return t_response - t_start
+                self.logger.info("Node %i responded to update request in %i ms", node_id, 1000 * (t_response - t_start))
 
-            self.logger.debug("Waiting for node %i to finish update", node_id)
-            is_node_updated = await self.wait_for_update(node_id, timeout)
-            t_updated = loop.time()
+                if not wait:
+                    return t_response - t_start
+
+                self.logger.debug("Waiting for node %i to finish update", node_id)
+                is_node_updated = await self.wait_for_update(node_id, timeout)
+                t_updated = loop.time()
+
+            finally:
+                self.update_callbacks.pop(node_id, None)
 
             if not is_node_updated:
                 raise TimeoutError(f"Node {node_id} failed to update in {timeout:.3f} seconds")
@@ -491,3 +508,26 @@ class Client:
             msg=record.text.tobytes().decode("utf8", errors="replace"),
             extra={"record": record, "transfer": transfer, "heartbeat": heartbeat, "info": info},
         )
+
+    async def _serve_file_read(
+        self,
+        request: uavcan.file.Read_1.Request,
+        meta: pycyphal.presentation.ServiceRequestMetadata,
+    ) -> uavcan.file.Read_1.Response:
+        self.logger.debug("%r: Request from %r: %r", self, meta.client_node_id, request)
+        try:
+            path: str = request.path.path.tobytes().decode(errors="ignore")
+            file = self.firmware_images[path]
+        except Exception as ex:
+            self.logger.info("%r: Error: %r", self, ex, exc_info=True)
+            return uavcan.file.Read_1.Response(
+                uavcan.file.Error_1.NOT_FOUND if isinstance(ex, KeyError) else uavcan.file.Error_1.UNKNOWN_ERROR
+            )
+        else:
+            data = file[request.offset : request.offset + FILE_READ_MAX_SIZE]
+            callback = self.update_callbacks.get(meta.client_node_id)
+            if callback:
+                progress = request.offset + len(data)
+                self.logger.debug("Update callback called for node %i: %i bytes", meta.client_node_id, progress)
+                callback(progress)
+            return uavcan.file.Read_1.Response(data=uavcan.primitive.Unstructured_1(np.frombuffer(data, np.uint8)))

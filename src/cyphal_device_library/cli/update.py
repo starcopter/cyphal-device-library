@@ -12,12 +12,14 @@ import logging
 import os
 import re
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Annotated, Any
 
 import pycyphal
 import rich.console
 import rich.padding
+import rich.progress
 import rich.table
 import typer
 import uavcan.node
@@ -301,8 +303,18 @@ async def execute_updates(
 
     console.print("")
 
-    update_tasks = [client.update(node_id, file.file, timeout=timeout) for node_id, file in updates.items()]
-    results = await asyncio.gather(*update_tasks, return_exceptions=True)
+    with rich.progress.Progress(console=console, auto_refresh=True) as progress:
+        update_tasks: list[asyncio.Task[float]] = []
+        for node_id, file in updates.items():
+            task_id = progress.add_task(f"Updating node {node_id}...", total=file.file.stat().st_size)
+
+            def callback(task_id: int, _bytes: int) -> None:
+                progress.update(task_id, completed=_bytes)
+
+            coroutine = client.update(node_id, file.file, timeout=timeout, callback=partial(callback, task_id))
+            update_tasks.append(asyncio.create_task(coroutine))
+
+        results = await asyncio.gather(*update_tasks, return_exceptions=True)
 
     table = rich.table.Table("ID", "Status", title="Update Status")
 
@@ -453,8 +465,18 @@ async def async_update_single(
 
         console.print("")
 
-        update_tasks = [client.update(node_id, file, timeout=timeout) for node_id in nodes_to_update]
-        results = await asyncio.gather(*update_tasks, return_exceptions=True)
+        with rich.progress.Progress(console=console, auto_refresh=True) as progress:
+            update_tasks: list[asyncio.Task[float]] = []
+            for node_id in nodes_to_update:
+                task_id = progress.add_task(f"Updating node {node_id}...", total=file.stat().st_size)
+
+                def callback(task_id: int, _bytes: int) -> None:
+                    progress.update(task_id, completed=_bytes)
+
+                coroutine = client.update(node_id, file, timeout=timeout, callback=partial(callback, task_id))
+                update_tasks.append(asyncio.create_task(coroutine))
+
+            results = await asyncio.gather(*update_tasks, return_exceptions=True)
 
         table = rich.table.Table("ID", "Status", title="Update Status")
 

@@ -3,7 +3,7 @@ import contextlib
 import importlib
 import logging
 import re
-from collections.abc import AsyncGenerator, Container, Iterable
+from collections.abc import AsyncGenerator, Callable, Container, Iterable
 from pathlib import Path
 from typing import Self, Type, TypeVar
 
@@ -304,7 +304,13 @@ class Device:
         # TODO: clear (refresh?) the registry, else it will contain stale information
         return await self.client.restart_node(self.node_id, wait, timeout or self.DEFAULT_RESTART_TIMEOUT)
 
-    async def update(self, image: Path, wait: bool = True, timeout: float = 5.0) -> float:
+    async def update(
+        self,
+        image: Path,
+        wait: bool = True,
+        timeout: float = 5.0,
+        callback: Callable[[int], None] | None = None,
+    ) -> float:
         """Update the firmware of the device.
 
         This method initiates a software update on the device using the provided firmware image.
@@ -326,7 +332,7 @@ class Device:
             >>> print(f"Update completed in {duration:.2f} seconds")
             Update completed in 3.45 seconds
         """
-        return await self.client.update(self.node_id, image, wait, timeout)
+        return await self.client.update(self.node_id, image, wait, timeout, callback)
 
     async def write_register(self, register_name: str, value: NativeValue) -> NativeValue:
         """Write a value to a register on the device.
