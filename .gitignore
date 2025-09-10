@@ -13,6 +13,6 @@ wheels/
 .env
 *.log
 
-# Temporary files
-/foo.py
-/test.py
+# Python and bin files in the root directory
+/*.py
+/*.bin
