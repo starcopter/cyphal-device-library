@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.13"
 
 [[package]]
@@ -141,6 +141,7 @@ dependencies = [
     { name = "python-can-usbtingo" },
     { name = "python-dotenv" },
     { name = "rich" },
+    { name = "sc-packaged-dsdl" },
     { name = "typer" },
 ]
 
@@ -158,6 +159,7 @@ requires-dist = [
     { name = "python-can-usbtingo", specifier = ">=1.0.2" },
     { name = "python-dotenv", specifier = ">=1.1.0" },
     { name = "rich", specifier = ">=13.0.0" },
+    { name = "sc-packaged-dsdl", git = "https://github.com/starcopter/packaged-dsdl-py.git" },
     { name = "typer", specifier = ">=0.16.0" },
 ]
 
@@ -725,6 +727,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/9b/c9ddf7f924d5617a1c94a93ba595f4b24cb5bc50e98b94433ab3f7ad27e5/ruff-0.11.12-py3-none-win32.whl", hash = "sha256:f5a07f49767c4be4772d161bfc049c1f242db0cfe1bd976e0f0886732a4765d6", size = 10475511, upload-time = "2025-05-29T13:31:32.917Z" },
     { url = "https://files.pythonhosted.org/packages/fd/d6/74fb6d3470c1aada019ffff33c0f9210af746cca0a4de19a1f10ce54968a/ruff-0.11.12-py3-none-win_amd64.whl", hash = "sha256:5a4d9f8030d8c3a45df201d7fb3ed38d0219bccd7955268e863ee4a115fa0832", size = 11523573, upload-time = "2025-05-29T13:31:35.782Z" },
     { url = "https://files.pythonhosted.org/packages/44/42/d58086ec20f52d2b0140752ae54b355ea2be2ed46f914231136dd1effcc7/ruff-0.11.12-py3-none-win_arm64.whl", hash = "sha256:65194e37853158d368e333ba282217941029a28ea90913c67e558c611d04daa5", size = 10697770, upload-time = "2025-05-29T13:31:38.009Z" },
+]
+
+[[package]]
+name = "sc-packaged-dsdl"
+version = "0.1.0"
+source = { git = "https://github.com/starcopter/packaged-dsdl-py.git#d8cbd79973374f7a007b9aa3240bf17fe2805280" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pydsdl" },
 ]
 
 [[package]]
