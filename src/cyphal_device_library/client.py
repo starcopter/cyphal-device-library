@@ -505,7 +505,7 @@ class Client:
         heartbeat, info = self.node_tracker.registry.get(transfer.source_node_id, (None, None))
         logging.getLogger("uavcan.diagnostic.record").log(
             level=UAVCAN_SEVERITY_TO_PYTHON[record.severity.value],
-            msg=record.text.tobytes().decode("utf8", errors="replace"),
+            msg=f"[{transfer.source_node_id}] " + record.text.tobytes().decode("utf8", errors="replace"),
             extra={"record": record, "transfer": transfer, "heartbeat": heartbeat, "info": info},
         )
 
