@@ -1,18 +1,27 @@
 import importlib.metadata
 import logging
+from datetime import datetime
 from typing import Annotated
 
 import typer
 from dotenv import load_dotenv
 
+from ..util.dsdl import get_output_directory
 from ..util.logging import UAVCAN_SEVERITY_TO_PYTHON, Errno105Filter
-from . import discover, registry, update
+from . import dsdl
 from ._util import configure_logging, set_default_usbtingo_env_vars
 
 app = typer.Typer()
-app.add_typer(update.app)
-app.add_typer(discover.app)
-app.add_typer(registry.app)
+app.add_typer(dsdl.app)
+
+try:
+    from . import discover, registry, update
+
+    app.add_typer(update.app)
+    app.add_typer(discover.app)
+    app.add_typer(registry.app)
+except ImportError:
+    app.info.epilog = "Run `cyphal install` to make more commands available."
 
 
 @app.callback()
@@ -53,13 +62,9 @@ def version():
 
     typer.echo(f"This is cyphal-device-library version {__version__}")
 
-
-@app.command()
-def install(
-    force: bool = typer.Option(False, "--force", "-f", help="Force re-download of DSDL repositories"),
-) -> None:
-    """Deprecated command to download and install DSDL namespaces."""
-    typer.echo(
-        "This command is deprecated and has no effect. Run `uv sync --upgrade-package sc-packaged-dsdl`, "
-        "`uv tool upgrade cyphal` or equivalent to upgrade DSDL data types."
-    )
+    dsdl_dir = get_output_directory()
+    if dsdl_dir.is_dir():
+        last_updated = datetime.fromtimestamp(dsdl_dir.stat().st_ctime).replace(microsecond=0)
+        typer.echo(f"DSDL files compiled to {dsdl_dir}, last updated {last_updated}")
+    else:
+        typer.echo("DSDL files not compiled yet. Run `cyphal install` to compile them.")
