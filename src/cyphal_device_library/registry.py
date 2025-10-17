@@ -481,9 +481,16 @@ class Register:
                 self._mutable, self._persistent = response.mutable, response.persistent
         if attr != "_value" and (response.mutable or not response.persistent):
             _logger.warning("special function register '%s' should be persistent and immutable", name)
-        current: uavcan.register.Access_1.Response = getattr(self, attr)
-        if current.timestamp.microsecond < response.timestamp.microsecond or response.timestamp.microsecond == 0:
-            setattr(self, attr, response)
+        last_timestamp: int = getattr(self, attr).timestamp.microsecond
+        new_timestamp: int = response.timestamp.microsecond
+        if new_timestamp < last_timestamp and new_timestamp != 0:
+            _logger.debug(
+                "Timestamp of register '%s' decreased (%d -> %d): this may be an indication of network time issues.",
+                name,
+                last_timestamp,
+                new_timestamp,
+            )
+        setattr(self, attr, response)
 
     @staticmethod
     def _parse_name(name: Union[str, uavcan.register.Name_1]) -> str:
