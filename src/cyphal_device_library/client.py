@@ -66,11 +66,13 @@ class Client:
             parallel_updates: Maximum number of parallel software updates allowed.
             logger: The logger to use for logging. Defaults to the logger for this module.
         """
+        self.uid = None
         node_info_attrs = {"name": name}
         if version is not None:
             node_info_attrs["software_version"] = version
         if uid is not None:
             node_info_attrs["unique_id"] = uid.to_bytes(16, "big")
+            self.uid = uid.to_bytes(16, "big").hex()
         self.node = pycyphal.application.make_node(
             pycyphal.application.NodeInfo(**node_info_attrs), registry, transport=transport
         )
@@ -341,11 +343,22 @@ class Client:
             True if the node restarted successfully, False if the operation timed out.
         """
         restarted = asyncio.Event()
+        self.restart_new_node_id = None
 
         def handler(updated_node_id: int, old_entry: Entry | None, new_entry: Entry | None) -> None:
             if updated_node_id == node_id and new_entry is not None and new_entry.info is None:
                 restarted.set()
                 self.logger.debug("Restart detected for node %i", node_id)
+            if new_entry is not None and new_entry.info is not None:
+                if new_entry.info.unique_id is not None and self.uid is not None:
+                    if new_entry.info.unique_id.tobytes().hex() == self.uid and updated_node_id != node_id:
+                        self.logger.warning(
+                            "Node (identical UID: %s) restarted with new Node ID: %i",
+                            self.uid,
+                            updated_node_id,
+                        )
+                        self.restart_new_node_id = updated_node_id
+                        restarted.set()
 
         self.node_tracker.add_update_handler(handler)
         try:
@@ -380,6 +393,8 @@ class Client:
             image: Path to the software image file.
             wait: Whether to wait for the update to complete.
             timeout: Maximum time to wait for the update to complete in seconds.
+            callback: Optional callback function to report progress. The function will be called with the number of
+                bytes transferred so far.
 
         Returns:
             The time taken for the update operation in seconds.
@@ -474,8 +489,11 @@ class Client:
         software_update_complete = asyncio.Event()
 
         async def handler(heartbeat: uavcan.node.Heartbeat_1, transfer: pycyphal.transport.TransferFrom) -> None:
-            if transfer.source_node_id == node_id and heartbeat.mode.value != uavcan.node.Mode_1.SOFTWARE_UPDATE:
-                software_update_complete.set()
+            if heartbeat.mode.value != uavcan.node.Mode_1.SOFTWARE_UPDATE:
+                if self.restart_new_node_id is None and transfer.source_node_id == node_id:
+                    software_update_complete.set()
+                elif self.restart_new_node_id is not None and transfer.source_node_id == self.restart_new_node_id:
+                    software_update_complete.set()
 
         heartbeat_subscription.receive_in_background(handler)
 

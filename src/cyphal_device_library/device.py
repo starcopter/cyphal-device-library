@@ -254,7 +254,9 @@ class Device:
             TimeoutError: If the node info request times out.
         """
         info = await self.get_info()
-        return info.unique_id.tobytes().hex()
+        uid = info.unique_id.tobytes().hex()
+        self.client.uid = uid
+        return uid
 
     async def execute(self, command: uavcan.node.ExecuteCommand_1.Request) -> uavcan.node.ExecuteCommand_1.Response:
         """Execute a command on the device.
