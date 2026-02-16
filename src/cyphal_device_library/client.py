@@ -280,13 +280,16 @@ class Client:
         finally:
             client.close()
 
-    async def restart_node(self, node_to_restart: int, wait: bool = True, timeout: float = 1.0) -> float:
+    async def restart_node(
+        self, node_to_restart: int, wait: bool = True, timeout: float = 1.0, current_uptime: float | None = None
+    ) -> float:
         """Restart a remote node and optionally wait for it to come back online.
 
         Args:
             node_to_restart: The ID of the node to restart.
             wait: Whether to wait for the node to come back online.
             timeout: Maximum time to wait for the node to restart in seconds.
+            current_uptime: If provided, the method will check for a heartbeat with uptime less than the current uptime to detect the restart.
 
         Returns:
             The time taken for the restart operation in seconds.
@@ -323,7 +326,7 @@ class Client:
             return t_response - t_start
 
         self.logger.debug("Waiting for node %i to check back in", node_to_restart)
-        is_node_back_online = await self.wait_for_restart(node_to_restart, timeout)
+        is_node_back_online = await self.wait_for_restart(node_to_restart, timeout, current_uptime=current_uptime)
         t_back_online = loop.time()
 
         if not is_node_back_online:
@@ -332,12 +335,13 @@ class Client:
 
         return t_back_online - t_start
 
-    async def wait_for_restart(self, node_id: int, timeout: float = 1.0) -> bool:
+    async def wait_for_restart(self, node_id: int, timeout: float = 1.0, current_uptime: float | None = None) -> bool:
         """Wait for a node to restart and come back online.
 
         Args:
             node_id: The ID of the node to wait for.
             timeout: Maximum time to wait in seconds.
+            current_uptime: If provided, the method will check for a heartbeat with uptime less than the current uptime to detect the restart.
 
         Returns:
             True if the node restarted successfully, False if the operation timed out.
@@ -363,6 +367,34 @@ class Client:
         self.node_tracker.add_update_handler(handler)
         try:
             async with asyncio.timeout(timeout):
+                # if current_uptime is provided, we can check for a heartbeat with uptime less than the current uptime to detect the restart
+                if current_uptime is not None:
+                    heartbeat_sub = self.node.make_subscriber(uavcan.node.Heartbeat_1)
+
+                    async def check_heartbeats():
+                        async for heartbeat, transfer in heartbeat_sub:
+                            if transfer.source_node_id != node_id:
+                                continue
+                            self.logger.debug(
+                                f"Heartbeat received from node {node_id} while waiting for restart: {heartbeat}"
+                            )
+                            if heartbeat.uptime < current_uptime:
+                                restarted.set()
+                                self.logger.info(
+                                    "Restart detected for node %i based on uptime (current: %i, previous: %i)",
+                                    node_id,
+                                    heartbeat.uptime,
+                                    current_uptime,
+                                )
+                                break
+
+                    heartbeat_task = asyncio.create_task(check_heartbeats())
+                    try:
+                        await restarted.wait()
+                    finally:
+                        heartbeat_task.cancel()
+                        heartbeat_sub.close()
+
                 await restarted.wait()
         except asyncio.TimeoutError:
             self.logger.warning("Restart of node %i timed out after %.1f seconds", node_id, timeout)

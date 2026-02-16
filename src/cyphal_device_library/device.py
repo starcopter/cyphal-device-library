@@ -304,7 +304,7 @@ class Device:
             Device restarted in 1.23 seconds
         """
         # TODO: clear (refresh?) the registry, else it will contain stale information
-        return await self.client.restart_node(self.node_id, wait, timeout or self.DEFAULT_RESTART_TIMEOUT)
+        return await self.client.restart_node(self.node_id, wait, timeout or self.DEFAULT_RESTART_TIMEOUT, current_uptime = self.uptime)
 
     async def update(
         self,
@@ -438,6 +438,9 @@ class Device:
         if node_id == self.node_id:
             logger.debug("Node ID is already set to %d", node_id)
             return
+        
+        if "uavcan.node.id" not in self.registry:
+            await self.registry.refresh_register("uavcan.node.id")
 
         register = self.registry["uavcan.node.id"]
         if await register.set_value(node_id):
@@ -612,6 +615,8 @@ async def discover_device_node_id(
         name = {name}
     if isinstance(uid, str):
         uid: bytes = bytes.fromhex(uid)
+    if exclude_uids is not None and isinstance(exclude_uids, Container):
+        exclude_uids = [bytes.fromhex(u) if isinstance(u, str) else u for u in exclude_uids]
 
     loop = asyncio.get_event_loop()
     fut_node_id: asyncio.Future[int] = loop.create_future()
