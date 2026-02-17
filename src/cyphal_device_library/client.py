@@ -267,7 +267,12 @@ class Client:
             result = await client.call(command)
             t_result = loop.time()
             if result is None:
-                raise TimeoutError(f"{command} to {server_node_id} timed out")
+                # second try
+                t_start = loop.time()
+                result = await client.call(command)
+                t_result = loop.time()
+                if result is None:
+                    raise TimeoutError(f"{command} to {server_node_id} timed out")
             response, _meta = result
             self.logger.debug(
                 "%s to node %i returned in %i ms with %s.",

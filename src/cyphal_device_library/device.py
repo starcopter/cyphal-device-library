@@ -16,6 +16,8 @@ from .registry import NativeValue, Registry
 logger = logging.getLogger(__name__)
 MessageClass = TypeVar("MessageClass")
 
+_T = TypeVar("_T")
+
 
 class Device:
     """A wrapper around a single device on a Cyphal bus.
@@ -304,7 +306,9 @@ class Device:
             Device restarted in 1.23 seconds
         """
         # TODO: clear (refresh?) the registry, else it will contain stale information
-        return await self.client.restart_node(self.node_id, wait, timeout or self.DEFAULT_RESTART_TIMEOUT, current_uptime = self.uptime)
+        return await self.client.restart_node(
+            self.node_id, wait, timeout or self.DEFAULT_RESTART_TIMEOUT, current_uptime=self.uptime
+        )
 
     async def update(
         self,
@@ -335,6 +339,58 @@ class Device:
             Update completed in 3.45 seconds
         """
         return await self.client.update(self.node_id, image, wait, timeout, callback)
+
+    async def get_subscriber(self, port_name: str, expected_dtype: type[_T]) -> pycyphal.presentation.Subscriber[_T]:
+        """Create a subscriber for the given port name and expected dtype.
+
+        This method looks up the port ID and type from the registry, and creates a Subscriber for the port with the
+        expected data type.
+
+        Args:
+            port_name: The name of the port to subscribe to (without the "uavcan.pub." prefix).
+            expected_dtype: The expected data type of the port. This is used for type checking and does not affect
+                the actual subscription.
+
+        Returns:
+            Subscriber[_T]: A Subscriber instance for the specified port.
+
+        Raises:
+            KeyError: If the port ID or type registers are not found.
+            RuntimeError: If the port type cannot be loaded or does not match the expected format or if the expected dtype does not match the port type.
+
+        Example:
+            >>> subscriber = await device.get_subscriber("my_port", uavcan.primitive.Empty_1_0)
+            >>> async for msg, meta in subscriber:
+            ...     print(f"Received message from node {meta.source_node_id}: {msg}")
+        """
+        try:
+            await self._ensure_registers(f"uavcan.pub.{port_name}.id", f"uavcan.pub.{port_name}.type")
+        except RuntimeError:
+            raise KeyError(f"Port '{port_name}' not found in registry of device with node ID {self.node_id}")
+
+        subscriber = self.get_subscription(port_name)
+        if subscriber.dtype != expected_dtype:  # pragma: no cover
+            logger.warning(
+                f"Unexpected dtype for port '{port_name}': expected {pycyphal.dsdl.get_model(expected_dtype)}, "
+                f"got {pycyphal.dsdl.get_model(subscriber.dtype)}",
+                RuntimeWarning,
+                stacklevel=1,
+            )
+            raise RuntimeError(
+                f"Unexpected dtype for port '{port_name}'. Expected {pycyphal.dsdl.get_model(expected_dtype)}, "
+                f"got {pycyphal.dsdl.get_model(subscriber.dtype)}"
+            )
+        return subscriber
+
+    async def _ensure_registers(self, *names: str) -> None:
+        """Ensure the specified registers are present in the registry, refreshing them from the device if necessary.
+
+        Args:
+            *names: The names of the registers to ensure.
+        """
+        for name in names:
+            if name not in self.registry:
+                await self.registry.refresh_register(name)
 
     async def write_register(self, register_name: str, value: NativeValue) -> NativeValue:
         """Write a value to a register on the device.
@@ -438,7 +494,7 @@ class Device:
         if node_id == self.node_id:
             logger.debug("Node ID is already set to %d", node_id)
             return
-        
+
         if "uavcan.node.id" not in self.registry:
             await self.registry.refresh_register("uavcan.node.id")
 
