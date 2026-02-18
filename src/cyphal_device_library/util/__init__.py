@@ -1,10 +1,12 @@
 import asyncio
 import logging
-from collections.abc import Sequence
+from collections.abc import Container, Sequence
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
+import can
+import questionary
 import rich.console
 import rich.prompt
 from rich.padding import Padding
@@ -38,6 +40,39 @@ def configure_logging(console: rich.console.Console | None = None, filename: Pat
             )
         )
         root_logger.addHandler(file_handler)
+
+
+SUPPORTED_CAN_INTERFACES: list[str] = ["usbtingo", "pcan", "socketcan"]
+
+
+async def select_can_channel(
+    message: str = "Select a CAN channel",
+    instruction: str | None = "Select from the list below.",
+    exclude: Container[str] = (),
+) -> str:
+    """Select a CAN channel from available interfaces."""
+    available_configurations = [
+        config_str
+        for config in can.detect_available_configs(SUPPORTED_CAN_INTERFACES)
+        if (config_str := f"{config['interface']}:{config['channel']}") not in exclude
+    ]
+
+    def _sort_key(config_str: str) -> tuple[int, str, str]:
+        iface, channel = config_str.split(":")
+        return (SUPPORTED_CAN_INTERFACES.index(iface), iface, channel)
+
+    available_configurations.sort(key=_sort_key)
+
+    if not available_configurations:  # pragma: no cover
+        rich.print("[red]✘[/red] No available CAN channels found. Please connect a CAN interface and try again.")
+        raise RuntimeError("No available CAN channels found")
+
+    question = questionary.select(message, instruction=instruction, choices=available_configurations)
+    answer = await question.ask_async()
+    if not answer:
+        raise ValueError("No answer provided")
+
+    return answer
 
 
 def make_can_transport(iface: str, bitrate: int | list[int], node_id: int) -> "CANTransport":
