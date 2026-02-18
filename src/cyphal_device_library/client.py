@@ -399,6 +399,10 @@ class Client:
                     finally:
                         heartbeat_task.cancel()
                         heartbeat_sub.close()
+                        try:
+                            self.node_tracker.remove_update_handler(handler)
+                        except ValueError:
+                            pass
 
                 await restarted.wait()
         except asyncio.TimeoutError:

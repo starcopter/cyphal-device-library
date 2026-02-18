@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import pycyphal
+import pycyphal.transport
 import rich.console
 import rich.padding
 import rich.progress
@@ -29,7 +30,7 @@ from rich.prompt import Confirm
 
 from ..client import Client
 from ..util import async_prompt
-from ._util import parse_int_set
+from ._util import get_can_transport, parse_int_set
 from .discover import format_node_table
 
 logger = logging.getLogger(__name__ if __name__ != "__main__" else Path(__file__).name)
@@ -331,6 +332,7 @@ async def execute_updates(
 
 
 async def async_selftest_update_all(
+    can_transport: pycyphal.transport.Transport,
     parallel_updates: int = 1,
     software_path: str | Path = "bin",
     timeout: float = 10,
@@ -341,7 +343,9 @@ async def async_selftest_update_all(
     software_files = SoftwareDirectory.from_path(software_path)
     software_files.print_rich_table(console)
 
-    with Client("com.starcopter.update-server", parallel_updates=parallel_updates, pnp_server=pnp) as client:
+    with Client(
+        "com.starcopter.update-server", parallel_updates=parallel_updates, pnp_server=pnp, transport=can_transport
+    ) as client:
         await asyncio.sleep(3)
 
         await update_all_selftest_nodes(client, software_files, console, timeout=timeout)
@@ -359,12 +363,14 @@ def selftest_update_all(
     """Update all selftest nodes with the latest software."""
 
     pnp = ctx.parent.params.get("pnp", False) if ctx.parent else False
+    can_transport = asyncio.run(get_can_transport(ctx))
 
     try:
         asyncio.run(
             async_selftest_update_all(
-                parallel_updates or get_default_parallel_updates(),
-                software_path,
+                parallel_updates=parallel_updates or get_default_parallel_updates(),
+                software_path=software_path,
+                can_transport=can_transport,
                 timeout=timeout,
                 pnp=pnp,
             )
@@ -392,11 +398,17 @@ def update(
 
     node_set = set(range(126)) if nodes == "all" else parse_int_set(nodes)
     pnp = ctx.parent.params.get("pnp", False) if ctx.parent else False
+    can_transport = asyncio.run(get_can_transport(ctx))
 
     try:
         asyncio.run(
             async_update_single(
-                node_set, file, parallel_updates or get_default_parallel_updates(), timeout=timeout, pnp=pnp
+                can_transport=can_transport,
+                node_ids=node_set,
+                file=file,
+                parallel_updates=parallel_updates or get_default_parallel_updates(),
+                timeout=timeout,
+                pnp=pnp,
             )
         )
     except KeyboardInterrupt:
@@ -406,11 +418,18 @@ def update(
 
 
 async def async_update_single(
-    node_ids: set[int], file: Path, parallel_updates: int, timeout: float = 300, pnp: bool = False
+    node_ids: set[int],
+    file: Path,
+    parallel_updates: int,
+    can_transport: pycyphal.transport.Transport,
+    timeout: float = 300,
+    pnp: bool = False,
 ) -> None:
     console = rich.console.Console()
 
-    with Client("com.starcopter.update-server", parallel_updates=parallel_updates, pnp_server=pnp) as client:
+    with Client(
+        "com.starcopter.update-server", parallel_updates=parallel_updates, pnp_server=pnp, transport=can_transport
+    ) as client:
         await asyncio.sleep(2)
 
         node_registry = client.node_tracker.registry
@@ -503,12 +522,14 @@ def update_all(
     """Update all nodes with the latest software."""
 
     pnp = ctx.parent.params.get("pnp", False) if ctx.parent else False
+    can_transport = asyncio.run(get_can_transport(ctx))
 
     try:
         asyncio.run(
             async_update_all(
-                parallel_updates or get_default_parallel_updates(),
-                software_path,
+                can_transport=can_transport,
+                parallel_updates=parallel_updates or get_default_parallel_updates(),
+                software_path=software_path,
                 timeout=timeout,
                 force=force,
                 pnp=pnp,
@@ -521,6 +542,7 @@ def update_all(
 
 
 async def async_update_all(
+    can_transport: pycyphal.transport.Transport,
     parallel_updates: int = 1,
     software_path: str | Path = "bin",
     timeout: float = 10,
@@ -532,7 +554,9 @@ async def async_update_all(
     software_files = SoftwareDirectory.from_path(software_path)
     software_files.print_rich_table(console)
 
-    with Client("com.starcopter.update-server", parallel_updates=parallel_updates, pnp_server=pnp) as client:
+    with Client(
+        "com.starcopter.update-server", parallel_updates=parallel_updates, pnp_server=pnp, transport=can_transport
+    ) as client:
         await asyncio.sleep(3)
 
         await update_all_nodes(client, software_files, console, timeout=timeout, force=force)

@@ -39,6 +39,25 @@ def main(
     pnp: Annotated[
         bool, typer.Option("--pnp-server", "-p", help="Launch PnP server for dynamic node ID allocation.")
     ] = False,
+    interface: Annotated[
+        str | None,
+        typer.Option(
+            help="CAN interface to be used. If not provided, the user will be asked to select one.",
+        ),
+    ] = None,
+    can_protocol: Annotated[
+        str | None,
+        typer.Option(
+            help="CAN protocol to use ('classic' or 'fd'). If not provided, the user will be asked to select one.",
+        ),
+    ] = None,
+    cyphal_node_id: Annotated[int, typer.Option(help="Node ID to use for this client. Defaults to 127.")] = 127,
+    can_bitrate: Annotated[
+        int, typer.Option(help="CAN bitrate in bits per second. Defaults to 1,000,000.")
+    ] = 1_000_000,
+    can_fd_bitrate: Annotated[
+        list[int], typer.Option(help="CAN FD bitrates in bits per second. Defaults to [1,000,000, 5,000,000].")
+    ] = [1_000_000, 5_000_000],
 ):
     if reload:
         load_dotenv(override=True)

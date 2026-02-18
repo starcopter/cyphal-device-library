@@ -5,7 +5,7 @@ from datetime import timedelta
 from typing import Annotated
 
 import pycyphal.application.node_tracker
-import questionary
+import pycyphal.transport
 import rich
 import rich.live
 import rich.padding
@@ -13,8 +13,7 @@ import rich.table
 import typer
 
 from ..client import Client
-from ..util import make_can_transport, select_can_channel
-from ._util import Health, Mode
+from ._util import Health, Mode, get_can_transport
 
 app = typer.Typer()
 
@@ -73,45 +72,17 @@ def format_node_table(nodes: dict[int, pycyphal.application.node_tracker.Entry])
 
 
 async def async_discover(
-    interface: str | None = None,
-    can_protocol: str | None = "classic",
-    can_bitrate: int = 1_000_000,
-    can_fd_bitrate: list[int] = [1_000_000, 5_000_000],
-    node_id: int = 127,
+    can_transport: pycyphal.transport.Transport | None = None,
     frame_rate: float = 4,
     pnp: bool = False,
 ):
     """Discover and display Cyphal nodes on the network.
 
     Args:
-        interface: Optional CAN interface to use (e.g., 'socketcan:can0'). If None, the user will be prompted to select from available interfaces.
-        can_protocol: CAN protocol to use ('classic' or 'fd'). Defaults to 'classic'.
-        can_fd_bitrate: List of CAN FD bitrates to use. Defaults to [1_000_000, 5_000_000].
-        node_id: Node ID to use for this client. Defaults to 127.
+        can_transport: Optional CAN transport to use. If None, the user will be prompted to select from available interfaces.
         frame_rate: Refresh rate for updating the display, in frames per second. Defaults to 4.
         pnp: Whether to use plug-and-play server functionality. Defaults to False.
     """
-    if interface is None:
-        interface = await select_can_channel()
-
-    if can_protocol is None:
-        question = questionary.select(
-            "Use Classic-CAN or CAN-FD?", instruction="Select the CAN protocol", choices=["Classic CAN", "CAN FD"]
-        )
-        answer = await question.ask_async()
-        if not answer:
-            raise ValueError("No answer provided")
-        if answer == "Classic CAN":
-            can_protocol = "classic"
-        else:
-            can_protocol = "fd"
-
-    if can_protocol == "classic":
-        can_transport = make_can_transport(interface, can_bitrate, node_id)
-    elif can_protocol == "fd":
-        can_transport = make_can_transport(interface, can_fd_bitrate, node_id)
-    else:
-        raise ValueError(f"Unsupported CAN protocol: {can_protocol}. Use 'classic' or 'fd'.")
 
     with Client("com.starcopter.device-discovery", transport=can_transport, pnp_server=pnp) as client:
 
@@ -130,38 +101,17 @@ async def async_discover(
 @app.command()
 def discover(
     ctx: typer.Context,
-    transport: Annotated[
-        str | None,
-        typer.Option(
-            help="CAN interface to be used. If not provided, the user will be asked to select one.",
-        ),
-    ] = None,
-    can_protocol: Annotated[
-        str | None,
-        typer.Option(
-            help="CAN protocol to use ('classic' or 'fd'). If not provided, the user will be asked to select one.",
-        ),
-    ] = None,
-    node_id: Annotated[int, typer.Option(help="Node ID to use for this client. Defaults to 127.")] = 127,
-    can_bitrate: Annotated[
-        int, typer.Option(help="CAN bitrate in bits per second. Defaults to 1,000,000.")
-    ] = 1_000_000,
-    can_fd_bitrate: Annotated[
-        list[int], typer.Option(help="CAN FD bitrates in bits per second. Defaults to [1,000,000, 5,000,000].")
-    ] = [1_000_000, 5_000_000],
     frame_rate: Annotated[
         float, typer.Option(help="Refresh rate for updating the display, in frames per second. Defaults to 4.")
     ] = 4,
 ):
     """Discover and display Cyphal nodes on the network."""
-    pnp = ctx.parent.params.get("pnp", False) if ctx.parent else False
+    can_transport = asyncio.run(get_can_transport(ctx))
+    pnp = ctx.parent.params.get("pnp", None) if ctx.parent else None
+
     asyncio.run(
         async_discover(
-            interface=transport,
-            can_protocol=can_protocol,
-            node_id=node_id,
-            can_bitrate=can_bitrate,
-            can_fd_bitrate=can_fd_bitrate,
+            can_transport=can_transport,
             frame_rate=frame_rate,
             pnp=pnp,
         )

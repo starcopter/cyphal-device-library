@@ -3,10 +3,48 @@ import os
 import re
 from enum import IntEnum
 
+import pycyphal.transport
+import questionary
+import typer
 from rich.console import Console
 from rich.logging import RichHandler
 
+from ..util import make_can_transport, select_can_channel
+
 _logger = logging.getLogger(__name__)
+
+
+async def get_can_transport(ctx: typer.Context) -> pycyphal.transport.Transport:
+    """Get a CAN transport based on CLI context parameters."""
+    interface = ctx.parent.params.get("interface", None) if ctx.parent else None
+    can_protocol = ctx.parent.params.get("can_protocol", None) if ctx.parent else None
+    cyphal_node_id = ctx.parent.params.get("cyphal_node_id", 127) if ctx.parent else 127
+    can_bitrate = ctx.parent.params.get("can_bitrate", 1_000_000) if ctx.parent else 1_000_000
+    can_fd_bitrate = (
+        ctx.parent.params.get("can_fd_bitrate", [1_000_000, 5_000_000]) if ctx.parent else [1_000_000, 5_000_000]
+    )
+
+    if interface is None:
+        interface = await select_can_channel()
+
+    if can_protocol is None:
+        question = questionary.select(
+            "Use Classic-CAN or CAN-FD?", instruction="Select the CAN protocol", choices=["Classic CAN", "CAN FD"]
+        )
+        answer = await question.ask_async()
+        if not answer:
+            raise ValueError("No answer provided")
+        if answer == "Classic CAN":
+            can_protocol = "classic"
+        else:
+            can_protocol = "fd"
+
+    if can_protocol == "classic":
+        return make_can_transport(interface, can_bitrate, cyphal_node_id)
+    elif can_protocol == "fd":
+        return make_can_transport(interface, can_fd_bitrate, cyphal_node_id)
+    else:
+        raise ValueError(f"Unsupported CAN protocol: {can_protocol}. Use 'classic' or 'fd'.")
 
 
 def configure_logging(verbosity: int, console: Console | None = None) -> None:
