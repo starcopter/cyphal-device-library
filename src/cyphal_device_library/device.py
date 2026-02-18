@@ -122,6 +122,7 @@ class Device:
         name: str | Container[str] | None = None,
         uid: str | bytes | None = None,
         exclude_uids: Container[str | bytes] | None = None,
+        exclude_node_ids: Container[int] | None = None,
         *,
         timeout: float = 3.0,
         **kwargs,
@@ -136,6 +137,7 @@ class Device:
             name: The name of the device to discover. If provided, the first device with a matching name will be used.
             uid: The unique ID of the device to discover. Can be provided as a string (hex format) or bytes.
             exclude_uids: A container (set, list, ...) of unique IDs to exclude from discovery.
+            exclude_node_ids: A container (set, list, ...) of node IDs to exclude from discovery.
             timeout: Maximum time in seconds to wait for device discovery.
             **kwargs: Additional arguments to pass to the Device constructor.
 
@@ -162,7 +164,9 @@ class Device:
             ...     print(mmb.registry)
             ...     print(telega.registry)
         """
-        node_id = await discover_device_node_id(client, name or cls.DEFAULT_NAME, uid, exclude_uids, timeout=timeout)
+        node_id = await discover_device_node_id(
+            client, name or cls.DEFAULT_NAME, uid, exclude_uids, exclude_node_ids, timeout=timeout
+        )
         return cls(client, node_id, **kwargs)
 
     async def __aenter__(self) -> Self:
@@ -630,6 +634,7 @@ async def discover_device_node_id(
     name: str | Container[str] | None = None,
     uid: str | bytes | None = None,
     exclude_uids: Container[str | bytes] | None = None,
+    exclude_node_ids: Container[int] | None = None,
     *,
     timeout: float = 3.0,
 ) -> int:
@@ -643,6 +648,7 @@ async def discover_device_node_id(
         name: The name of the device to discover. If provided, the first device with a matching name will be returned.
         uid: The unique ID of the device to discover. Can be provided as a string (hex format) or bytes.
         exclude_uids: A container (set, list, ...) of unique IDs to exclude from discovery.
+        exclude_node_ids: A container (set, list, ...) of node IDs to exclude from discovery.
         timeout: Maximum time in seconds to wait for device discovery.
 
     Returns:
@@ -677,7 +683,7 @@ async def discover_device_node_id(
     loop = asyncio.get_event_loop()
     fut_node_id: asyncio.Future[int] = loop.create_future()
 
-    def _matches(entry: Entry) -> bool:
+    def _matches(entry: Entry, entry_node_id: int) -> bool:
         if entry.info is None:
             return False
         if name is not None and entry.info.name.tobytes().decode() not in name:
@@ -686,18 +692,19 @@ async def discover_device_node_id(
             return False
         if exclude_uids is not None and entry.info.unique_id.tobytes() in exclude_uids:
             return False
-
+        if exclude_node_ids is not None and entry_node_id in exclude_node_ids:
+            return False
         return True
 
     def _discover(node_id: int, _old: Entry | None, entry: Entry | None) -> None:
         if fut_node_id.done() or entry is None or entry.info is None:
             return
 
-        if _matches(entry):
+        if _matches(entry, node_id):
             fut_node_id.set_result(node_id)
 
     for node_id, entry in client.node_tracker.registry.items():
-        if _matches(entry):
+        if _matches(entry, node_id):
             # matching device already in the registry, no need to wait
             dut_node_id = node_id
             break
