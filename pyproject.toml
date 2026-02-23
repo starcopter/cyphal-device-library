@@ -22,8 +22,15 @@ cyphal = "cyphal_device_library.cli:app"
 dev = [
     "bump-my-version>=1.2.0",
     "pre-commit>=4.2.0",
-    "ruff>=0.11.12",
     "yakut>=0.14.0",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.1.0",
+    "pytest-cov>=6.2.1",
+    "pytest-dependency>=0.6.0",
+    "pytest-rerunfailures>=16.1",
+    "pytest-xdist[psutil]>=3.8.0",
+    "ruff>=0.12.7",
+    "ty>=0.0.1a16",
 ]
 
 [build-system]
@@ -72,3 +79,22 @@ pre_commit_hooks = [
     "git add uv.lock",
 ]
 post_commit_hooks = []
+
+[tool.ty.src]
+include = [
+    "src",
+    "tests",
+]
+
+[tool.ty.rules]
+invalid-assignment = "ignore"       # allow implicit shadowing in tests to mock methods
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+relative_files = true
+omit = [
+    "__main__.py",
+    "tests/**",
+]
