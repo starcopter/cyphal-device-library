@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from collections.abc import Container, Sequence
+from collections.abc import Container
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
@@ -104,14 +104,16 @@ def make_can_transport(iface: str, bitrate: int | list[int], node_id: int) -> "C
     from pycyphal.application import make_transport
     from pycyphal.application.register import Natural16, Natural32, ValueProxy
 
-    if not isinstance(bitrate, Sequence):
-        bitrate = [bitrate]
-    if len(bitrate) == 1:
-        bitrate = [bitrate[0], bitrate[0]]
-    if len(bitrate) != 2:
+    if isinstance(bitrate, int):
+        # classic CAN
+        bitrate = [bitrate, bitrate]
+        mtu = 8
+    elif len(bitrate) == 2:
+        # CAN FD
+        bitrate = [bitrate[0], bitrate[1]]
+        mtu = 64
+    else:
         raise ValueError("Only 2 bitrates are supported")
-
-    mtu = 64 if bitrate[0] != bitrate[1] else 8
 
     config = {
         "uavcan.can.iface": ValueProxy(iface),
@@ -119,6 +121,8 @@ def make_can_transport(iface: str, bitrate: int | list[int], node_id: int) -> "C
         "uavcan.can.bitrate": ValueProxy(Natural32(bitrate)),
         "uavcan.node.id": ValueProxy(Natural16([node_id])),
     }
+
+    rich.print(f"Creating CAN transport with iface '{iface}', bitrate {bitrate}, mtu {mtu}, and node ID {node_id}")
     return make_transport(config)
 
 

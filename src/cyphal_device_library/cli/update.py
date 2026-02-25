@@ -362,19 +362,19 @@ def selftest_update_all(
 ) -> None:
     """Update all selftest nodes with the latest software."""
 
-    pnp = ctx.parent.params.get("pnp", False) if ctx.parent else False
-    can_transport = asyncio.run(get_can_transport(ctx))
+    async def _run() -> None:
+        pnp = bool(ctx.parent.params.get("pnp", False)) if ctx.parent else False
+        can_transport = await get_can_transport(ctx)
+        await async_selftest_update_all(
+            parallel_updates=parallel_updates or get_default_parallel_updates(),
+            software_path=software_path,
+            can_transport=can_transport,
+            timeout=timeout,
+            pnp=pnp,
+        )
 
     try:
-        asyncio.run(
-            async_selftest_update_all(
-                parallel_updates=parallel_updates or get_default_parallel_updates(),
-                software_path=software_path,
-                can_transport=can_transport,
-                timeout=timeout,
-                pnp=pnp,
-            )
-        )
+        asyncio.run(_run())
     except KeyboardInterrupt:
         typer.echo("Cancelled by user, exiting.")
     except (pycyphal.presentation.PortClosedError, asyncio.InvalidStateError):
@@ -397,20 +397,21 @@ def update(
     """Update a specified set of nodes with a specific software file."""
 
     node_set = set(range(126)) if nodes == "all" else parse_int_set(nodes)
-    pnp = ctx.parent.params.get("pnp", False) if ctx.parent else False
-    can_transport = asyncio.run(get_can_transport(ctx))
+
+    async def _run() -> None:
+        pnp = bool(ctx.parent.params.get("pnp", False)) if ctx.parent else False
+        can_transport = await get_can_transport(ctx)
+        await async_update_single(
+            can_transport=can_transport,
+            node_ids=node_set,
+            file=file,
+            parallel_updates=parallel_updates or get_default_parallel_updates(),
+            timeout=timeout,
+            pnp=pnp,
+        )
 
     try:
-        asyncio.run(
-            async_update_single(
-                can_transport=can_transport,
-                node_ids=node_set,
-                file=file,
-                parallel_updates=parallel_updates or get_default_parallel_updates(),
-                timeout=timeout,
-                pnp=pnp,
-            )
-        )
+        asyncio.run(_run())
     except KeyboardInterrupt:
         typer.echo("Cancelled by user, exiting.")
     except (pycyphal.presentation.PortClosedError, asyncio.InvalidStateError):
@@ -521,20 +522,20 @@ def update_all(
 ) -> None:
     """Update all nodes with the latest software."""
 
-    pnp = ctx.parent.params.get("pnp", False) if ctx.parent else False
-    can_transport = asyncio.run(get_can_transport(ctx))
+    async def _run() -> None:
+        pnp = bool(ctx.parent.params.get("pnp", False)) if ctx.parent else False
+        can_transport = await get_can_transport(ctx)
+        await async_update_all(
+            can_transport=can_transport,
+            parallel_updates=parallel_updates or get_default_parallel_updates(),
+            software_path=software_path,
+            timeout=timeout,
+            force=force,
+            pnp=pnp,
+        )
 
     try:
-        asyncio.run(
-            async_update_all(
-                can_transport=can_transport,
-                parallel_updates=parallel_updates or get_default_parallel_updates(),
-                software_path=software_path,
-                timeout=timeout,
-                force=force,
-                pnp=pnp,
-            )
-        )
+        asyncio.run(_run())
     except KeyboardInterrupt:
         typer.echo("Cancelled by user, exiting.")
     except (pycyphal.presentation.PortClosedError, asyncio.InvalidStateError):

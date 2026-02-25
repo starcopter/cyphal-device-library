@@ -71,33 +71,6 @@ def format_node_table(nodes: dict[int, pycyphal.application.node_tracker.Entry])
     return table
 
 
-async def async_discover(
-    can_transport: pycyphal.transport.Transport | None = None,
-    frame_rate: float = 4,
-    pnp: bool = False,
-):
-    """Discover and display Cyphal nodes on the network.
-
-    Args:
-        can_transport: Optional CAN transport to use. If None, the user will be prompted to select from available interfaces.
-        frame_rate: Refresh rate for updating the display, in frames per second. Defaults to 4.
-        pnp: Whether to use plug-and-play server functionality. Defaults to False.
-    """
-
-    with Client("com.starcopter.device-discovery", transport=can_transport, pnp_server=pnp) as client:
-
-        def get_table():
-            return rich.padding.Padding(format_node_table(client.node_tracker.registry), (0, 1))
-
-        with rich.live.Live(get_table(), auto_refresh=True, refresh_per_second=frame_rate) as live:
-            try:
-                while True:
-                    live.update(get_table())
-                    await asyncio.sleep(1 / frame_rate)
-            except KeyboardInterrupt:
-                pass
-
-
 @app.command()
 def discover(
     ctx: typer.Context,
@@ -105,14 +78,27 @@ def discover(
         float, typer.Option(help="Refresh rate for updating the display, in frames per second. Defaults to 4.")
     ] = 4,
 ):
-    """Discover and display Cyphal nodes on the network."""
-    can_transport = asyncio.run(get_can_transport(ctx))
-    pnp = ctx.parent.params.get("pnp", None) if ctx.parent else None
+    """Discover and display Cyphal nodes on the network.
 
-    asyncio.run(
-        async_discover(
-            can_transport=can_transport,
-            frame_rate=frame_rate,
-            pnp=pnp,
-        )
-    )
+    Args:
+        frame_rate: Refresh rate for updating the display, in frames per second. Defaults to 4.
+    """
+
+    async def _run() -> None:
+        can_transport = await get_can_transport(ctx)
+        pnp = bool(ctx.parent.params.get("pnp", False)) if ctx.parent else False
+
+        with Client("com.starcopter.device-discovery", transport=can_transport, pnp_server=pnp) as client:
+
+            def get_table():
+                return rich.padding.Padding(format_node_table(client.node_tracker.registry), (0, 1))
+
+            with rich.live.Live(get_table(), auto_refresh=True, refresh_per_second=frame_rate) as live:
+                try:
+                    while True:
+                        live.update(get_table())
+                        await asyncio.sleep(1 / frame_rate)
+                except KeyboardInterrupt:
+                    pass
+
+    asyncio.run(_run())
