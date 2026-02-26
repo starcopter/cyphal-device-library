@@ -31,6 +31,7 @@ The `TypeProxy` class is used internally to handle type conversion between Cypha
 import asyncio
 import contextlib
 import logging
+import math
 import re
 import time
 import warnings
@@ -380,7 +381,11 @@ class Registry:
                 return False
         response = result[0]
         self._insert(name, response)
-        success = value == reg.value or isinstance(value, list) and len(value) == 1 and value[0] == reg.value
+        success = (value == reg.value) or \
+                                  (math.isnan(value) and math.isnan(reg.value)) or \
+                                  (isinstance(value, list) and len(value) == 1 and \
+                                      (value[0] == reg.value or \
+                                       (math.isnan(value[0]) and math.isnan(reg.value))))
         if success:
             _logger.info("Node %i: %s set to %s", self.node_id, name, value)
         else:
