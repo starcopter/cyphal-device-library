@@ -1,15 +1,15 @@
-import asyncio
 import logging
-from collections.abc import Container
-from functools import partial
+import sys
+from collections.abc import Awaitable, Callable, Container
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
 import can
-import questionary
 import rich.console
 import rich.prompt
 from rich.padding import Padding
+
+from cyphal_device_library.util.questions import SelectQuestion
 
 if TYPE_CHECKING:
     from pycyphal.transport.can import CANTransport
@@ -42,13 +42,16 @@ def configure_logging(console: rich.console.Console | None = None, filename: Pat
         root_logger.addHandler(file_handler)
 
 
-SUPPORTED_CAN_INTERFACES: list[str] = ["usbtingo", "pcan", "socketcan"]
+SUPPORTED_CAN_INTERFACES: list[str] = ["usbtingo", "pcan"]
+if sys.platform != "win32":  # TODO
+    SUPPORTED_CAN_INTERFACES.append("socketcan")
 
 
 async def select_can_channel(
     message: str = "Select a CAN channel",
     instruction: str | None = "Select from the list below.",
     exclude: Container[str] = (),
+    question_caller: Callable[[SelectQuestion], Awaitable[str]] = SelectQuestion.ask,
 ) -> str:
     """Select a CAN channel from available interfaces."""
     available_configurations = [
@@ -67,8 +70,8 @@ async def select_can_channel(
         rich.print("[red]✘[/red] No available CAN channels found. Please connect a CAN interface and try again.")
         raise RuntimeError("No available CAN channels found")
 
-    question = questionary.select(message, instruction=instruction, choices=available_configurations)
-    answer = await question.ask_async()
+    question = SelectQuestion(message, instruction, available_configurations)
+    answer = await question_caller(question)
     if not answer:
         raise ValueError("No answer provided")
 
@@ -138,7 +141,3 @@ def spaces_to_padding(text: str) -> Padding:
     trailing_spaces = len(text) - len(text.rstrip())
     leading_spaces = len(text) - len(text.lstrip())
     return Padding(text.strip(), (0, trailing_spaces, 0, leading_spaces))
-
-
-async def async_prompt(prompt: rich.prompt.PromptBase[T], default: T = ...) -> T:
-    return await asyncio.get_event_loop().run_in_executor(None, partial(prompt, default=default))

@@ -26,10 +26,9 @@ import typer
 import uavcan.node
 from pycyphal.application import node_tracker
 from pycyphal.application.node_tracker import Entry
-from rich.prompt import Confirm
 
 from ..client import Client
-from ..util import async_prompt
+from ..util.questions import ConfirmQuestion
 from ._util import get_can_transport, parse_int_set
 from .discover import format_node_table
 
@@ -298,7 +297,7 @@ async def execute_updates(
 
     console.print(_padded(table))
 
-    if not await async_prompt(Confirm("Continue with update?", console=console)):
+    if not await ConfirmQuestion("Continue with update?").ask():
         logger.info("Update cancelled by user, exiting.")
         return
 
@@ -479,7 +478,7 @@ async def async_update_single(
 
         console.print(_padded(table))
 
-        if not await async_prompt(Confirm("Continue with update?", console=console)):
+        if not await ConfirmQuestion("Continue with update?").ask():
             logger.info("Update cancelled by user, exiting.")
             return
 
