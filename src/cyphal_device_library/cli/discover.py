@@ -1,6 +1,7 @@
 """Simple CLI command to discover and display Cyphal nodes on the network."""
 
 import asyncio
+import time
 from datetime import timedelta
 from typing import Annotated
 
@@ -16,6 +17,9 @@ from ..client import Client
 from ._util import Health, Mode, get_can_transport
 
 app = typer.Typer()
+
+
+script_begin_time = time.monotonic()
 
 
 def format_node_table(nodes: dict[int, pycyphal.application.node_tracker.Entry]) -> rich.table.Table:
@@ -40,6 +44,8 @@ def format_node_table(nodes: dict[int, pycyphal.application.node_tracker.Entry])
     table.add_column("Git Hash")
     table.add_column("CRC")
     table.add_column("Unique ID")
+
+    rows_added = False
 
     for node_id, entry in sorted(nodes.items()):
         vssc = entry.heartbeat.vendor_specific_status_code
@@ -67,6 +73,19 @@ def format_node_table(nodes: dict[int, pycyphal.application.node_tracker.Entry])
             )
 
         table.add_row(*row)
+        rows_added = True
+
+    if not rows_added:
+        table = rich.table.Table(title="Cyphal Nodes")
+        table.add_column("No nodes discovered yet...")
+        table.add_row(
+            "Tip: Use [green]-p[/green] for a PnP Server, or [blue]-v[/blue] for higher verbosity!",
+        )
+        uptime_seconds = time.monotonic() - script_begin_time
+        minutes = int(uptime_seconds // 60)
+        seconds = int(uptime_seconds % 60)
+        formatted_uptime = f"{minutes}:{seconds:02d}"
+        table.add_row(f"Script running for: {formatted_uptime} \\[min:sec]")
 
     return table
 
