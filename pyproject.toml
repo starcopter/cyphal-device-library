@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.scripts]
-cyphal = "cyphal_device_library.cli:app"
+cyphal = "cyphal_device_library.cli:run"
 
 [dependency-groups]
 dev = [

@@ -1,8 +1,10 @@
 import importlib.metadata
 import logging
+import sys
 from datetime import datetime
 from typing import Annotated
 
+import rich
 import typer
 from dotenv import load_dotenv
 
@@ -22,6 +24,76 @@ try:
     app.add_typer(registry.app)
 except ImportError:
     app.info.epilog = "Run `cyphal install` to make more commands available."
+
+
+def general_argument_position_reorder(argv: list[str]) -> list[str]:
+    if len(argv) <= 2:
+        return argv
+
+    global_no_value = {
+        "-v",
+        "-vv",
+        "-vvv",
+        "-vvvv",
+        "--verbose",
+        "-r",
+        "--reload",
+        "-p",
+        "--pnp-server",
+    }
+    global_with_value = {
+        "-d",
+        "--diagnostic",
+        "--interface",
+        "--can-protocol",
+        "--cyphal-node-id",
+        "--can-arb-bitrate",
+        "--can-data-bitrate",
+    }
+
+    global_args: list[str] = []
+    command_args: list[str] = []
+
+    index = 1
+    while index < len(argv):
+        arg = argv[index]
+
+        if arg == "--":
+            command_args.extend(argv[index:])
+            break
+
+        if arg in global_no_value:
+            if arg in global_args:
+                rich.print(f"[yellow]Duplicate global argument '{arg}' found. Ignoring duplicates.[/yellow]")
+            else:
+                global_args.append(arg)
+            index += 1
+            continue
+
+        if arg in global_with_value:
+            if arg in global_args:
+                rich.print(f"[yellow]Duplicate global argument '{arg}' found. Ignoring duplicates.[/yellow]")
+            else:
+                global_args.append(arg)
+                if index + 1 < len(argv):
+                    global_args.append(argv[index + 1])
+                else:
+                    rich.print(f"[red]Expected a value after global argument '{arg}', but none was found.[/red]")
+                    sys.exit(1)
+            index += 2
+            continue
+
+        command_args.append(arg)
+        index += 1
+
+    return [argv[0], *global_args, *command_args]
+
+
+def run() -> None:
+    reordered_argv = general_argument_position_reorder(sys.argv)
+    if reordered_argv != sys.argv:
+        sys.argv[:] = reordered_argv
+    app()
 
 
 @app.callback()
@@ -52,12 +124,15 @@ def main(
         ),
     ] = None,
     cyphal_node_id: Annotated[int, typer.Option(help="Node ID to use for this client. Defaults to 127.")] = 127,
-    can_bitrate: Annotated[
-        int, typer.Option(help="CAN bitrate in bits per second. Defaults to 1,000,000.")
+    can_arb_bitrate: Annotated[
+        int,
+        typer.Option(
+            help="CAN arbitration bitrate in bits per second. (used for all by Classic CAN) Defaults to 1,000,000."
+        ),
     ] = 1_000_000,
-    can_fd_bitrate: Annotated[
-        list[int], typer.Option(help="CAN FD bitrates in bits per second. Defaults to [1,000,000, 5,000,000].")
-    ] = [1_000_000, 5_000_000],
+    can_data_bitrate: Annotated[
+        int, typer.Option(help="CAN data bitrates in bits per second. (only used by CAN FD) Defaults to 5,000,000.")
+    ] = 5_000_000,
 ):
     if reload:
         load_dotenv(override=True)

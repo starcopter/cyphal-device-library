@@ -17,6 +17,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
+can_transport_cyphal_node_id = None
+can_transport_interface = None
+can_transport_bitrate = None
+
 
 def configure_logging(console: rich.console.Console | None = None, filename: Path | str | None = None):
     from rich.logging import RichHandler
@@ -107,7 +111,7 @@ def make_can_transport(iface: str, bitrate: int | list[int], node_id: int) -> "C
     from pycyphal.application import make_transport
     from pycyphal.application.register import Natural16, Natural32, ValueProxy
 
-    if isinstance(bitrate, int):
+    if isinstance(bitrate, int) or (len(bitrate) == 2 and bitrate[0] == bitrate[1]):
         # classic CAN
         bitrate = [bitrate, bitrate]
         mtu = 8
@@ -125,7 +129,14 @@ def make_can_transport(iface: str, bitrate: int | list[int], node_id: int) -> "C
         "uavcan.node.id": ValueProxy(Natural16([node_id])),
     }
 
-    rich.print(f"Creating CAN transport with iface '{iface}', bitrate {bitrate}, mtu {mtu}, and node ID {node_id}")
+    global can_transport_cyphal_node_id, can_transport_interface, can_transport_bitrate
+    can_transport_cyphal_node_id = node_id
+    can_transport_interface = iface
+    can_transport_bitrate = bitrate
+
+    rich.print(
+        f"[dim]Creating CAN transport with iface '{iface}', bitrate {bitrate}, mtu {mtu}, and node ID {node_id}[/dim]"
+    )
     return make_transport(config)
 
 

@@ -22,12 +22,13 @@ app = typer.Typer()
 script_begin_time = time.monotonic()
 
 
-def format_node_table(nodes: dict[int, pycyphal.application.node_tracker.Entry]) -> rich.table.Table:
+def format_node_table(nodes: dict[int, pycyphal.application.node_tracker.Entry], pnp: bool) -> rich.table.Table:
     """Format a dictionary of Cyphal nodes into a rich table for display.
 
     Args:
         nodes: Dictionary mapping node IDs to their tracker entries.
             Each entry contains heartbeat and possibly node information.
+        pnp: Whether the discovery is running in PnP Server mode, which may affect display hints.
 
     Returns:
         rich.table.Table: A formatted table containing node information.
@@ -79,7 +80,7 @@ def format_node_table(nodes: dict[int, pycyphal.application.node_tracker.Entry])
         table = rich.table.Table(title="Cyphal Nodes")
         table.add_column("No nodes discovered yet...")
         table.add_row(
-            "Tip: Use [green]-p[/green] for a PnP Server, or [blue]-v[/blue] for higher verbosity!",
+            f"Tip: Use [green]-p[/green]{' ([bold]already active![/bold])' if pnp else ''} for a PnP Server, or [blue]-v[/blue] for higher verbosity!",
         )
         uptime_seconds = time.monotonic() - script_begin_time
         minutes = int(uptime_seconds // 60)
@@ -107,10 +108,30 @@ def discover(
         can_transport = await get_can_transport(ctx)
         pnp = bool(ctx.parent.params.get("pnp", False)) if ctx.parent else False
 
+        from ..util import can_transport_bitrate, can_transport_cyphal_node_id, can_transport_interface
+
+        assert can_transport_cyphal_node_id is not None
+        assert can_transport_interface is not None
+        assert can_transport_bitrate is not None
+
+        command = (
+            "cyphal discover"
+            + (" -p" if pnp else "")
+            + f" --can-protocol {'classic' if can_transport.protocol_parameters.mtu <= 8 else 'fd'}"
+            + f" --interface {can_transport_interface}"
+            + f" --cyphal-node-id {can_transport_cyphal_node_id}"
+            + (
+                f" --can-arb-bitrate {can_transport_bitrate[0]}"
+                if can_transport.protocol_parameters.mtu <= 8
+                else f" --can-data-bitrate {can_transport_bitrate[1]}"
+            )
+        )
+        rich.print(f"Current discovery command: \n[bold green]{command}[/bold green]\n")
+
         with Client("com.starcopter.device-discovery", transport=can_transport, pnp_server=pnp) as client:
 
             def get_table():
-                return rich.padding.Padding(format_node_table(client.node_tracker.registry), (0, 1))
+                return rich.padding.Padding(format_node_table(client.node_tracker.registry, pnp), (0, 1))
 
             with rich.live.Live(get_table(), auto_refresh=True, refresh_per_second=frame_rate) as live:
                 try:

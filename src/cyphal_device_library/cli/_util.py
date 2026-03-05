@@ -19,14 +19,13 @@ async def get_can_transport(ctx: typer.Context) -> pycyphal.transport.Transport:
     interface = ctx.parent.params.get("interface", None) if ctx.parent else None
     can_protocol = ctx.parent.params.get("can_protocol", None) if ctx.parent else None
     cyphal_node_id = ctx.parent.params.get("cyphal_node_id", 127) if ctx.parent else 127
-    can_bitrate = ctx.parent.params.get("can_bitrate", 1_000_000) if ctx.parent else 1_000_000
-    can_fd_bitrate = (
-        ctx.parent.params.get("can_fd_bitrate", [1_000_000, 5_000_000]) if ctx.parent else [1_000_000, 5_000_000]
-    )
+    can_arb_bitrate = ctx.parent.params.get("can_arb_bitrate", 1_000_000) if ctx.parent else 1_000_000
+    can_data_bitrate = ctx.parent.params.get("can_data_bitrate", 5_000_000) if ctx.parent else 5_000_000
 
     if interface is None:
         interface = await select_can_channel()
 
+    can_protocol = can_protocol.lower() if can_protocol else None
     if can_protocol is None:
         question = questionary.select(
             "Use Classic-CAN or CAN-FD?", instruction="Select the CAN protocol", choices=["Classic CAN", "CAN FD"]
@@ -40,9 +39,9 @@ async def get_can_transport(ctx: typer.Context) -> pycyphal.transport.Transport:
             can_protocol = "fd"
 
     if can_protocol == "classic":
-        return make_can_transport(interface, can_bitrate, cyphal_node_id)
+        return make_can_transport(interface, can_arb_bitrate, cyphal_node_id)
     elif can_protocol == "fd":
-        return make_can_transport(interface, can_fd_bitrate, cyphal_node_id)
+        return make_can_transport(interface, [can_arb_bitrate, can_data_bitrate], cyphal_node_id)
     else:
         raise ValueError(f"Unsupported CAN protocol: {can_protocol}. Use 'classic' or 'fd'.")
 
