@@ -110,14 +110,16 @@ def make_can_transport(iface: str, bitrate: int | list[int], node_id: int) -> "C
     """
     from pycyphal.application import make_transport
     from pycyphal.application.register import Natural16, Natural32, ValueProxy
+    from pycyphal.transport.can import CANTransport
 
+    bitrate_list: list[int]
     if isinstance(bitrate, int) or (len(bitrate) == 2 and bitrate[0] == bitrate[1]):
         # classic CAN
-        bitrate = [bitrate, bitrate]
+        bitrate_list = [bitrate, bitrate] if isinstance(bitrate, int) else [bitrate[0], bitrate[1]]
         mtu = 8
     elif len(bitrate) == 2:
         # CAN FD
-        bitrate = [bitrate[0], bitrate[1]]
+        bitrate_list = [bitrate[0], bitrate[1]]
         mtu = 64
     else:
         raise ValueError("Only 2 bitrates are supported")
@@ -125,19 +127,21 @@ def make_can_transport(iface: str, bitrate: int | list[int], node_id: int) -> "C
     config = {
         "uavcan.can.iface": ValueProxy(iface),
         "uavcan.can.mtu": ValueProxy(Natural16([mtu])),
-        "uavcan.can.bitrate": ValueProxy(Natural32(bitrate)),
+        "uavcan.can.bitrate": ValueProxy(Natural32(bitrate_list)),
         "uavcan.node.id": ValueProxy(Natural16([node_id])),
     }
 
     global can_transport_cyphal_node_id, can_transport_interface, can_transport_bitrate
     can_transport_cyphal_node_id = node_id
     can_transport_interface = iface
-    can_transport_bitrate = bitrate
+    can_transport_bitrate = bitrate_list
 
     rich.print(
-        f"[dim]Creating CAN transport with iface '{iface}', bitrate {bitrate}, mtu {mtu}, and node ID {node_id}[/dim]"
+        f"[dim]Creating CAN transport with iface '{iface}', bitrate {bitrate_list}, mtu {mtu}, and node ID {node_id}[/dim]"
     )
-    return make_transport(config)
+    transport = make_transport(config)
+    assert isinstance(transport, CANTransport)
+    return transport
 
 
 def spaces_to_padding(text: str) -> Padding:

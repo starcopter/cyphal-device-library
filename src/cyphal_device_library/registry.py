@@ -39,14 +39,12 @@ from collections import defaultdict
 from typing import (
     TYPE_CHECKING,
     Any,
-    AsyncContextManager,
     AsyncGenerator,
     AsyncIterator,
     Callable,
     Iterator,
     Optional,
     Type,
-    TypeVar,
     Union,
     cast,
 )
@@ -61,7 +59,6 @@ if TYPE_CHECKING:
 
 
 _logger = logging.getLogger(__name__)
-ServiceClass = TypeVar("ServiceClass")
 
 RegisterValue = Union[
     uavcan.primitive.Empty_1,
@@ -102,6 +99,10 @@ RegisterType = Union[
 ]
 
 
+def _is_nan_value(value: NativeValue) -> bool:
+    return isinstance(value, float) and math.isnan(value)
+
+
 class Registry:
     """Registry to interact with registers on a single remote Cyphal node.
 
@@ -133,7 +134,7 @@ class Registry:
     def __init__(
         self,
         node_id: int | None,
-        client_factory: Callable[[Type[ServiceClass], int], pycyphal.presentation.Client[ServiceClass]],
+        client_factory: Callable[[type[Any], int], pycyphal.presentation.Client[Any]],
     ) -> None:
         """Initialize a new Registry instance.
 
@@ -145,7 +146,7 @@ class Registry:
         """
         self.node_id = node_id
         self._client_factory = client_factory
-        self._client_locks: defaultdict[Type[ServiceClass], asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._client_locks: defaultdict[type[Any], asyncio.Lock] = defaultdict(asyncio.Lock)
         self._registers: dict[str, Register] = dict()
 
     def _check_node_id(self) -> None:
@@ -183,7 +184,7 @@ class Registry:
                     # none of the {up to N} attempts returned a result
                     _logger.info("Node %i seems not to have the Register API implemented", self.node_id)
                     return
-                response: uavcan.register.List_1.Response = result[0]
+                response: uavcan.register.List_1.Response = cast(uavcan.register.List_1.Response, result[0])
                 if len(response.name.name) == 0:
                     # empty name means the list is exhausted; we've discovered all registers
                     break
@@ -330,23 +331,45 @@ class Registry:
 
         return table
 
-    async def _yield_client(
-        self, dtype: Type[ServiceClass]
-    ) -> AsyncIterator[pycyphal.presentation.Client[ServiceClass]]:
+    async def _yield_client(self, dtype: type[Any]) -> AsyncIterator[pycyphal.presentation.Client[Any]]:
         self._check_node_id()
+        node_id = self.node_id
+        assert node_id is not None
         async with self._client_locks[dtype]:
-            client = self._client_factory(dtype, self.node_id)
+            client = self._client_factory(dtype, node_id)
             client.response_timeout = self.RESPONSE_TIMEOUT
             try:
                 yield client
             finally:
                 client.close()
 
-    def _list_client(self) -> AsyncContextManager[pycyphal.presentation.Client[uavcan.register.List_1]]:
-        return contextlib.asynccontextmanager(self._yield_client)(uavcan.register.List_1)
+    @contextlib.asynccontextmanager
+    async def _list_client(self) -> AsyncIterator[pycyphal.presentation.Client[uavcan.register.List_1]]:
+        self._check_node_id()
+        node_id = self.node_id
+        assert node_id is not None
+        dtype = uavcan.register.List_1
+        async with self._client_locks[dtype]:
+            client = cast(pycyphal.presentation.Client[uavcan.register.List_1], self._client_factory(dtype, node_id))
+            client.response_timeout = self.RESPONSE_TIMEOUT
+            try:
+                yield client
+            finally:
+                client.close()
 
-    def _access_client(self) -> AsyncContextManager[pycyphal.presentation.Client[uavcan.register.Access_1]]:
-        return contextlib.asynccontextmanager(self._yield_client)(uavcan.register.Access_1)
+    @contextlib.asynccontextmanager
+    async def _access_client(self) -> AsyncIterator[pycyphal.presentation.Client[uavcan.register.Access_1]]:
+        self._check_node_id()
+        node_id = self.node_id
+        assert node_id is not None
+        dtype = uavcan.register.Access_1
+        async with self._client_locks[dtype]:
+            client = cast(pycyphal.presentation.Client[uavcan.register.Access_1], self._client_factory(dtype, node_id))
+            client.response_timeout = self.RESPONSE_TIMEOUT
+            try:
+                yield client
+            finally:
+                client.close()
 
     async def set_value(self, name: str, value: NativeValue) -> bool:
         """Set a register's value on the remote node.
@@ -380,15 +403,15 @@ class Registry:
                 _logger.error("Access to register %s of node %i failed", name, self.node_id)
                 _logger.debug(request)
                 return False
-        response = result[0]
+        response = cast(uavcan.register.Access_1.Response, result[0])
         self._insert(name, response)
         success = (
             (value == reg.value)
-            or (math.isnan(value) and math.isnan(reg.value))
+            or (_is_nan_value(value) and _is_nan_value(reg.value))
             or (
                 isinstance(value, list)
                 and len(value) == 1
-                and (value[0] == reg.value or (math.isnan(value[0]) and math.isnan(reg.value)))
+                and (value[0] == reg.value or (_is_nan_value(value[0]) and _is_nan_value(reg.value)))
             )
         )
         if success:
@@ -680,7 +703,7 @@ class TypeProxy:
     between the UAVCAN data type and a matching native Python data type.
     """
 
-    ACCESSORS = {
+    ACCESSORS: dict[type[Any], str] = {
         uavcan.primitive.String_1: "string",
         uavcan.primitive.Unstructured_1: "unstructured",
         uavcan.primitive.array.Bit_1: "bit",
@@ -743,7 +766,7 @@ class TypeProxy:
 
     def to_native(self, value: Union[uavcan.register.Value_1, RegisterValue, None], unpack: bool = True) -> NativeValue:
         if isinstance(value, uavcan.register.Value_1):
-            attr = self.ACCESSORS[self.register_type]
+            attr = self.ACCESSORS[cast(type[Any], self.register_type)]
             value = getattr(value, attr)
 
         if value is None or isinstance(value, uavcan.primitive.Empty_1):
@@ -791,20 +814,22 @@ class TypeProxy:
             assert isinstance(value, list)
             if self.length != len(value):
                 raise ValueError(f"length mismatch: expected {self.length}, got {len(value)}")
-        return self.register_type(value)
+        constructor = cast(Callable[[Any], RegisterValue], self.register_type)
+        return constructor(value)
 
     def to_uavcan_value(self, value: NativeValue) -> uavcan.register.Value_1:
         if value is None:
             return uavcan.register.Value_1()
-        attr = self.ACCESSORS[self.register_type]
-        return uavcan.register.Value_1(**{attr: self.to_uavcan_data_type(value)})
+        attr = self.ACCESSORS[cast(type[Any], self.register_type)]
+        kwargs: dict[str, Any] = {attr: self.to_uavcan_data_type(value)}
+        return uavcan.register.Value_1(**kwargs)
 
     def normalize(self, value: NativeValue) -> NativeValue:
         return self.to_native(self.to_uavcan_data_type(value))
 
     @property
     def type_str(self) -> str:
-        type_str = self.ACCESSORS[self.register_type]
+        type_str = self.ACCESSORS[cast(type[Any], self.register_type)]
         if self.register_type not in (
             uavcan.primitive.Empty_1,
             uavcan.primitive.String_1,

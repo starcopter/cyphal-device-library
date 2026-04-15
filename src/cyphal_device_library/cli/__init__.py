@@ -8,7 +8,7 @@ import rich
 import typer
 from dotenv import load_dotenv
 
-from ..util._logging import UAVCAN_SEVERITY_TO_PYTHON, Errno105Filter
+from ..util._logging import UAVCAN_SEVERITY_TO_PYTHON, Errno105Filter, UAVCANDiagnosticSeverity
 from ..util.dsdl import get_output_directory
 from . import dsdl
 from ._util import configure_logging, set_default_usbtingo_env_vars
@@ -140,7 +140,8 @@ def main(
     set_default_usbtingo_env_vars()
 
     diagnost_record_logger = logging.getLogger("uavcan.diagnostic.record")
-    diagnost_record_logger.setLevel(UAVCAN_SEVERITY_TO_PYTHON[7 - diagnostic_record_verbosity])
+    severity = UAVCANDiagnosticSeverity(max(0, min(7, 7 - diagnostic_record_verbosity)))
+    diagnost_record_logger.setLevel(UAVCAN_SEVERITY_TO_PYTHON[severity])
     level_name = logging.getLevelName(diagnost_record_logger.level)
     logging.debug(f"[-d|--diagnostic] Setting diagnostic record verbosity to {level_name}")
 

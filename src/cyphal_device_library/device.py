@@ -727,6 +727,7 @@ async def discover_device_node_id(
             client.node_tracker.remove_update_handler(_discover)
 
     entry = client.node_tracker.registry[dut_node_id]
+    assert entry.info is not None
     logger.info(
         "Found device under test: node ID %d, name %s, UID %s",
         dut_node_id,
