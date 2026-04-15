@@ -51,13 +51,11 @@ if sys.platform != "win32":  # TODO
     SUPPORTED_CAN_INTERFACES.append("socketcan")
 
 
-async def select_can_channel(
-    message: str = "Select a CAN channel",
-    instruction: str | None = "Select from the list below.",
-    exclude: Container[str] = (),
-    question_caller: Callable[[SelectQuestion], Awaitable[str]] = SelectQuestion.ask,
-) -> str:
-    """Select a CAN channel from available interfaces."""
+def list_available_can_channels(exclude: Container[str] = ()) -> list[str]:
+    """Return sorted available CAN interface/channel configurations.
+
+    Example return values: ``socketcan:can0``, ``usbtingo:abc123``.
+    """
     available_configurations = [
         config_str
         for config in can.detect_available_configs(SUPPORTED_CAN_INTERFACES)
@@ -69,6 +67,17 @@ async def select_can_channel(
         return (SUPPORTED_CAN_INTERFACES.index(iface), iface, channel)
 
     available_configurations.sort(key=_sort_key)
+    return available_configurations
+
+
+async def select_can_channel(
+    message: str = "Select a CAN channel",
+    instruction: str | None = "Select from the list below.",
+    exclude: Container[str] = (),
+    question_caller: Callable[[SelectQuestion], Awaitable[str]] = SelectQuestion.ask,
+) -> str:
+    """Select a CAN channel from available interfaces."""
+    available_configurations = list_available_can_channels(exclude=exclude)
 
     if not available_configurations:  # pragma: no cover
         rich.print("[red]✘[/red] No available CAN channels found. Please connect a CAN interface and try again.")
