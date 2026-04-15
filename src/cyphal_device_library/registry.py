@@ -48,6 +48,7 @@ from typing import (
     Type,
     TypeVar,
     Union,
+    cast,
 )
 
 import pycyphal.presentation
@@ -244,7 +245,7 @@ class Registry:
             _logger.error("Access to register %s of node %i failed", name_str, self.node_id)
             return
 
-        response: uavcan.register.Access_1.Response = result[0]
+        response: uavcan.register.Access_1.Response = cast(uavcan.register.Access_1.Response, result[0])
 
         if response.value.empty is None:
             # when _empty_ is None, it means another union member is not None, meaning we received a useful value

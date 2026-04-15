@@ -6,7 +6,7 @@ import os
 import re
 import warnings
 from pathlib import Path
-from typing import AsyncGenerator, Type, TypeVar
+from typing import AsyncGenerator, Callable, Type, TypeVar
 
 import pycyphal
 import pycyphal.application
@@ -138,7 +138,7 @@ class DeviceClient(Client):
         await self._initialized.wait()
         return self
 
-    async def __aexit__(self, exc_t, exc_v, exc_tb) -> None:
+    async def __aexit__(self, exc_type, exc_value, traceback) -> None:
         self.close()
 
     @property
@@ -160,23 +160,26 @@ class DeviceClient(Client):
     @property
     def info(self) -> uavcan.node.GetInfo_1.Response | None:
         """Node info, gathered from the node tracker."""
-        _, info = self.node_tracker.registry.get(self.dut, (None, None))
-        return info
+        if self.dut is None:
+            return None
+        entry = self.node_tracker.registry.get(self.dut)
+        return entry.info if entry is not None else None
 
     @property
     def heartbeat(self) -> uavcan.node.Heartbeat_1 | None:
         """Last received heartbeat."""
-        heartbeat, _ = self.node_tracker.registry.get(self.dut, (None, None))
-        return heartbeat
+        if self.dut is None:
+            return None
+        entry = self.node_tracker.registry.get(self.dut)
+        return entry.heartbeat if entry is not None else None
 
     @property
     def uptime(self) -> int:
         """Uptime of the device under test, in seconds."""
-        try:
-            return self.heartbeat.uptime
-        except AttributeError:
-            # no heartbeat yet
+        heartbeat = self.heartbeat
+        if heartbeat is None:
             return 0
+        return heartbeat.uptime
 
     async def wait_for_info(self) -> pycyphal.application.NodeInfo:
         """Wait for the node info of the device under test to be available."""
@@ -220,6 +223,8 @@ class DeviceClient(Client):
         Returns:
             The response from the device under test.
         """
+        if self.dut is None:
+            raise RuntimeError("No device under test configured")
         return await self.execute_command(command, server_node_id=self.dut)
 
     async def restart(self, wait: bool = True, timeout: float = 1.0) -> float:
@@ -233,20 +238,36 @@ class DeviceClient(Client):
             If `wait` is True, the time the DUT took to come back online.
             If `wait` is False, the time until the DUT took to respond to the request.
         """
+        if self.dut is None:
+            raise RuntimeError("No device under test configured")
         return await self.restart_node(self.dut, wait, timeout)
 
-    async def update(self, image: Path, wait: bool = True, timeout: float = 5.0) -> float:
+    async def update(
+        self,
+        image: Path | str,
+        node_id: int | None = None,
+        wait: bool = True,
+        timeout: float = 5.0,
+        callback: Callable[[int], None] | None = None,
+    ) -> float:
         """Update the firmware of the device under test.
 
         Args:
             image: Path to the firmware image file.
+            node_id: The node ID of the device to update (default: the device under test).
             wait: Whether to wait for the device to restart after the update.
             timeout: Maximum time in seconds to wait for the device to restart.
+            callback: Optional callback reporting transferred bytes.
 
         Returns:
             float: Time taken for the update process to complete.
         """
-        return await super().update(self.dut, image, wait, timeout)
+        if node_id is None:
+            if self.dut is None:
+                raise RuntimeError("No device under test configured")
+            node_id = self.dut
+
+        return await super().update(image, node_id, wait, timeout, callback)
 
     async def write_register(self, register_name: str, value: NativeValue) -> NativeValue:
         """Write a value to a register on the device under test.
@@ -260,7 +281,7 @@ class DeviceClient(Client):
 
         Raises:
             KeyError: If the register does not exist.
-            TypeError: If the registter is immutable or if the value is not compatible with the register's type.
+            TypeError: If the register is immutable or if the value is not compatible with the register's type.
             AssertionError: If the write operation fails.
         """
         register = self.registry[register_name]  # this may raise a KeyError
@@ -358,6 +379,7 @@ class DeviceClient(Client):
         try:
             yield
         finally:
+            assert isinstance(previous_value, int), "uavcan.node.id register value must be an int"
             await self.set_node_id(previous_value)
 
     def _get_port_id(self, port_name: str) -> int:

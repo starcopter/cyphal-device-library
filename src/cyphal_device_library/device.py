@@ -97,7 +97,7 @@ class Device:
                 tg.create_task(self.get_info())
                 if isinstance(discover_registers, Iterable):
                     for name in discover_registers:
-                        tg.create_task(self.registry.refresh_register(name, full=True))
+                        tg.create_task(self.registry.refresh_register(name, full=False))
                 elif discover_registers:
                     tg.create_task(self.registry.discover_registers())
 
@@ -121,8 +121,8 @@ class Device:
         client: Client,
         name: str | Container[str] | None = None,
         uid: str | bytes | None = None,
-        exclude_uids: Container[str | bytes] | None = None,
-        exclude_node_ids: Container[int] | None = None,
+        exclude_uids: Iterable[str | bytes] | None = None,
+        exclude_node_ids: Iterable[int] | None = None,
         *,
         timeout: float = 3.0,
         **kwargs,
@@ -136,8 +136,8 @@ class Device:
             client: The Client instance to use for communication.
             name: The name of the device to discover. If provided, the first device with a matching name will be used.
             uid: The unique ID of the device to discover. Can be provided as a string (hex format) or bytes.
-            exclude_uids: A container (set, list, ...) of unique IDs to exclude from discovery.
-            exclude_node_ids: A container (set, list, ...) of node IDs to exclude from discovery.
+            exclude_uids: An Iterable (set, list, ...) of unique IDs to exclude from discovery.
+            exclude_node_ids: An Iterable (set, list, ...) of node IDs to exclude from discovery.
             timeout: Maximum time in seconds to wait for device discovery.
             **kwargs: Additional arguments to pass to the Device constructor.
 
@@ -342,7 +342,7 @@ class Device:
             >>> print(f"Update completed in {duration:.2f} seconds")
             Update completed in 3.45 seconds
         """
-        return await self.client.update(self.node_id, image, wait, timeout, callback)
+        return await self.client.update(image, self.node_id, wait, timeout, callback)
 
     async def get_subscriber(self, port_name: str, expected_dtype: type[_T]) -> pycyphal.presentation.Subscriber[_T]:
         """Create a subscriber for the given port name and expected dtype.
@@ -535,7 +535,8 @@ class Device:
         try:
             yield
         finally:
-            await self.set_node_id(previous_value)
+            if isinstance(previous_value, int) and previous_value != node_id:
+                await self.set_node_id(previous_value)
 
     def _get_port_id(self, port_name: str) -> int:
         port_id = self.registry[f"uavcan.pub.{port_name}.id"].value
@@ -633,8 +634,8 @@ async def discover_device_node_id(
     client: Client,
     name: str | Container[str] | None = None,
     uid: str | bytes | None = None,
-    exclude_uids: Container[str | bytes] | None = None,
-    exclude_node_ids: Container[int] | None = None,
+    exclude_uids: Iterable[str | bytes] | None = None,
+    exclude_node_ids: Iterable[int] | None = None,
     *,
     timeout: float = 3.0,
 ) -> int:
@@ -647,8 +648,8 @@ async def discover_device_node_id(
         client: The client to use for discovering the device.
         name: The name of the device to discover. If provided, the first device with a matching name will be returned.
         uid: The unique ID of the device to discover. Can be provided as a string (hex format) or bytes.
-        exclude_uids: A container (set, list, ...) of unique IDs to exclude from discovery.
-        exclude_node_ids: A container (set, list, ...) of node IDs to exclude from discovery.
+        exclude_uids: A Iterable (set, list, ...) of unique IDs to exclude from discovery.
+        exclude_node_ids: A Iterable (set, list, ...) of node IDs to exclude from discovery.
         timeout: Maximum time in seconds to wait for device discovery.
 
     Returns:
@@ -677,7 +678,7 @@ async def discover_device_node_id(
         name = {name}
     if isinstance(uid, str):
         uid: bytes = bytes.fromhex(uid)
-    if exclude_uids is not None and isinstance(exclude_uids, Container):
+    if exclude_uids is not None and isinstance(exclude_uids, Iterable):
         exclude_uids = [bytes.fromhex(u) if isinstance(u, str) else u for u in exclude_uids]
 
     loop = asyncio.get_event_loop()

@@ -7,7 +7,7 @@ import logging
 from collections.abc import Callable, Sequence
 from functools import partial
 from pathlib import Path
-from typing import Self
+from typing import Any, Self, cast
 
 import numpy as np
 import pycyphal
@@ -19,7 +19,7 @@ import uavcan.primitive
 from pycyphal.application.node_tracker import Entry, NodeTracker
 from pycyphal.application.plug_and_play import CentralizedAllocator
 
-from .util.logging import UAVCAN_SEVERITY_TO_PYTHON
+from .util._logging import UAVCAN_SEVERITY_TO_PYTHON, UAVCANDiagnosticSeverity
 
 FILE_READ_MAX_SIZE = 256
 
@@ -69,12 +69,14 @@ class Client:
         self.uid = None
         node_info_attrs = {"name": name}
         if version is not None:
-            node_info_attrs["software_version"] = version
+            node_info_attrs["software_version"] = str(version)
         if uid is not None:
-            node_info_attrs["unique_id"] = uid.to_bytes(16, "big")
+            node_info_attrs["unique_id"] = uid.to_bytes(16, "big").hex()
             self.uid = uid.to_bytes(16, "big").hex()
         self.node = pycyphal.application.make_node(
-            pycyphal.application.NodeInfo(**node_info_attrs), registry, transport=transport
+            pycyphal.application.NodeInfo(**cast(dict[str, Any], node_info_attrs)),
+            registry,
+            transport=transport,
         )
 
         self.logger = logger
@@ -101,11 +103,9 @@ class Client:
             self.pnp_allocator = CentralizedAllocator(self.node)
 
             def pnp_register_node(node_id: int, _old: Entry | None, entry: Entry | None) -> None:
-                try:
-                    unique_id = entry.info.unique_id.tobytes()
-                except AttributeError:
-                    unique_id = None
-                self.pnp_allocator.register_node(node_id, unique_id)
+                unique_id = entry.info.unique_id.tobytes() if entry is not None and entry.info is not None else None
+                if self.pnp_allocator is not None:
+                    self.pnp_allocator.register_node(node_id, unique_id)
 
             self.node_tracker.add_update_handler(pnp_register_node)
         else:
@@ -156,11 +156,11 @@ class Client:
 
     def _log_node_changes(self, node_id: int, old_entry: Entry | None, new_entry: Entry | None) -> None:
         self.node.heartbeat_publisher.vendor_specific_status_code = len(self.node_tracker.registry)
-        if old_entry is None and new_entry.info is None:
-            self.logger.info("Node %i appeared", node_id)
-            return
         if new_entry is None:
             self.logger.info("Node %i went dark", node_id)
+            return
+        if old_entry is None and new_entry.info is None:
+            self.logger.info("Node %i appeared", node_id)
             return
         if new_entry.info is None:
             self.logger.info("Node %i restarted", node_id)
@@ -224,7 +224,7 @@ class Client:
             if result is None:
                 raise TimeoutError(f"GetInfo request to node {node_id} timed out")
             response, _meta = result
-            return response
+            return cast(uavcan.node.GetInfo_1.Response, response)
         finally:
             client.close()
 
@@ -281,7 +281,7 @@ class Client:
                 1000 * (t_result - t_start),
                 response,
             )
-            return response
+            return cast(uavcan.node.ExecuteCommand_1.Response, response)
         finally:
             client.close()
 
@@ -419,8 +419,8 @@ class Client:
 
     async def update(
         self,
-        node_id: int,
         image: Path | str,
+        node_id: int,
         wait: bool = True,
         timeout: float = 10.0,
         callback: Callable[[int], None] | None = None,
@@ -446,7 +446,7 @@ class Client:
 
         Example:
             >>> with Client("my_node") as client:
-            ...     duration = await client.update(9, "bin/com.starcopter.aeric.mmb-4.1-2.1.app.bin")
+            ...     duration = await client.update("bin/com.starcopter.aeric.mmb-4.1-2.1.app.bin", 9)
             ...     print(duration)
             1.6074032904580235
         """
@@ -561,10 +561,14 @@ class Client:
             record: The diagnostic record to log.
             transfer: The transfer metadata associated with the record.
         """
-        heartbeat, info = self.node_tracker.registry.get(transfer.source_node_id, (None, None))
+        source_node_id = transfer.source_node_id
+        entry = self.node_tracker.registry.get(source_node_id) if source_node_id is not None else None
+        heartbeat = entry.heartbeat if entry is not None else None
+        info = entry.info if entry is not None else None
+        severity = UAVCANDiagnosticSeverity(record.severity.value)
         logging.getLogger("uavcan.diagnostic.record").log(
-            level=UAVCAN_SEVERITY_TO_PYTHON[record.severity.value],
-            msg=f"[{transfer.source_node_id}] " + record.text.tobytes().decode("utf8", errors="replace"),
+            level=UAVCAN_SEVERITY_TO_PYTHON[severity],
+            msg=f"[{source_node_id}] " + record.text.tobytes().decode("utf8", errors="replace"),
             extra={"record": record, "transfer": transfer, "heartbeat": heartbeat, "info": info},
         )
 
@@ -579,9 +583,12 @@ class Client:
             file = self.firmware_images[path]
         except Exception as ex:
             self.logger.info("%r: Error: %r", self, ex, exc_info=True)
-            return uavcan.file.Read_1.Response(
-                uavcan.file.Error_1.NOT_FOUND if isinstance(ex, KeyError) else uavcan.file.Error_1.UNKNOWN_ERROR
+            error = (
+                uavcan.file.Error_1(uavcan.file.Error_1.NOT_FOUND)
+                if isinstance(ex, KeyError)
+                else uavcan.file.Error_1(uavcan.file.Error_1.UNKNOWN_ERROR)
             )
+            return uavcan.file.Read_1.Response(error)
         else:
             data = file[request.offset : request.offset + FILE_READ_MAX_SIZE]
             callback = self.update_callbacks.get(meta.client_node_id)

@@ -26,6 +26,7 @@ import typer
 import uavcan.node
 from pycyphal.application import node_tracker
 from pycyphal.application.node_tracker import Entry
+from rich.progress import TaskID
 
 from ..client import Client
 from ..util.questions import ConfirmQuestion
@@ -79,9 +80,9 @@ class SoftwareFile:
 
         return cls(file, **match.groupdict())
 
-    def is_compatible_to(self, node: node_tracker.Entry) -> bool:
+    def is_compatible_to(self, node: node_tracker.Entry, cyphal_node_id: int) -> bool:
         if node.info is None:
-            logger.warning("Node %s: no info available, cannot determine compatibility", node.id)
+            logger.warning(f"Node {cyphal_node_id}: no info available, cannot determine compatibility")
             return False
 
         node_name = node.info.name.tobytes().decode()
@@ -89,9 +90,9 @@ class SoftwareFile:
 
         return self.name == node_name and self.hw_version == node_hw_version
 
-    def is_hw_compatible_to(self, node: node_tracker.Entry) -> bool:
+    def is_hw_compatible_to(self, node: node_tracker.Entry, cyphal_node_id: int) -> bool:
         if node.info is None:
-            logger.warning("Node %s: no info available, cannot determine compatibility", node.id)
+            logger.warning(f"Node {cyphal_node_id}: no info available, cannot determine compatibility")
             return False
 
         node_hw_version = f"{node.info.hardware_version.major}.{node.info.hardware_version.minor}"
@@ -126,12 +127,14 @@ class SoftwareDirectory(list[SoftwareFile]):
 
         return self
 
-    def get_updates_for(self, node: node_tracker.Entry, selftest_update: bool = False) -> list[SoftwareFile]:
+    def get_updates_for(
+        self, node: node_tracker.Entry, cyphal_node_id: int, selftest_update: bool = False
+    ) -> list[SoftwareFile]:
         if node.info is None:
-            logger.warning("Node %s: no info available, cannot determine updates", node.id)
+            logger.warning(f"Node {cyphal_node_id}: no info available, cannot determine updates")
             return []
         if not selftest_update:
-            compatible = [file for file in self if file.is_compatible_to(node)]
+            compatible = [file for file in self if file.is_compatible_to(node, cyphal_node_id)]
         else:
             if "selftest" not in node.info.name.tobytes().decode():
                 logger.warning(
@@ -139,16 +142,18 @@ class SoftwareDirectory(list[SoftwareFile]):
                     node.info.name.tobytes().decode(),
                 )
                 return []
-            compatible = [file for file in self if file.is_hw_compatible_to(node) and not file.is_selftest()]
+            compatible = [
+                file for file in self if file.is_hw_compatible_to(node, cyphal_node_id) and not file.is_selftest()
+            ]
         name = node.info.name.tobytes().decode()
         hw_version = f"{node.info.hardware_version.major}.{node.info.hardware_version.minor}"
         logger.debug("%s %s: found %d compatible software files", name, hw_version, len(compatible))
         return compatible
 
     def get_update_for(
-        self, node: node_tracker.Entry, force: bool = False, selftest_update: bool = False
+        self, node: node_tracker.Entry, cyphal_node_id: int, force: bool = False, selftest_update: bool = False
     ) -> SoftwareFile | None:
-        updates = self.get_updates_for(node, selftest_update=selftest_update)
+        updates = self.get_updates_for(node, cyphal_node_id, selftest_update=selftest_update)
         if not updates:
             return None
 
@@ -156,9 +161,7 @@ class SoftwareDirectory(list[SoftwareFile]):
 
         if len(updates) > 1:
             logger.warning(
-                "Node %s: found multiple compatible software files (%d), using the latest one",
-                node.id,
-                len(updates),
+                f"Node {cyphal_node_id}: found multiple compatible software files ({len(updates)}), using the latest one"
             )
         file = max(updates, key=lambda x: x._sort_key)
         file_version_tuple: tuple[int, int] = tuple(map(int, file.sw_version.split(".")))
@@ -220,7 +223,7 @@ async def update_all_selftest_nodes(
         for node_id, node in nodes.items()
         if node.info is not None and "selftest" in node.info.name.tobytes().decode()
         # == "com.starcopter.selftest"
-        if (file := software_files.get_update_for(node, selftest_update=True)) is not None
+        if (file := software_files.get_update_for(node, cyphal_node_id=node_id, selftest_update=True)) is not None
         # and "selftest" not in file.name
         # and "selftest" in node.info.name.tobytes().decode() # or == "com.starcopter.selftest"
     }
@@ -245,7 +248,7 @@ async def update_all_nodes(
     updates = {
         node_id: file
         for node_id, node in nodes.items()
-        if (file := software_files.get_update_for(node, force=force)) is not None
+        if (file := software_files.get_update_for(node, cyphal_node_id=node_id, force=force)) is not None
     }
     await execute_updates(client, console, timeout=timeout, nodes=nodes, updates=updates)
 
@@ -275,6 +278,9 @@ async def execute_updates(
     for node_id, file in sorted(updates.items()):
         info = nodes[node_id].info
         heartbeat = nodes[node_id].heartbeat
+        if info is None:
+            logger.warning("Node %s: no info available, skipping", node_id)
+            continue
         node_hw_version = f"{info.hardware_version.major}.{info.hardware_version.minor}"
         node_sw_version = f"{info.software_version.major}.{info.software_version.minor}"
         node_vcs = f"{info.software_vcs_revision_id:016x}"
@@ -308,10 +314,10 @@ async def execute_updates(
         for node_id, file in updates.items():
             task_id = progress.add_task(f"Updating node {node_id}...", total=file.file.stat().st_size)
 
-            def callback(task_id: int, _bytes: int) -> None:
+            def callback(task_id: TaskID, _bytes: int) -> None:
                 progress.update(task_id, completed=_bytes)
 
-            coroutine = client.update(node_id, file.file, timeout=timeout, callback=partial(callback, task_id))
+            coroutine = client.update(file.file, node_id, timeout=timeout, callback=partial(callback, task_id))
             update_tasks.append(asyncio.create_task(coroutine))
 
         results = await asyncio.gather(*update_tasks, return_exceptions=True)
@@ -448,7 +454,7 @@ async def async_update_single(
 
         logger.info("Updating %d nodes: %s", len(nodes_to_update), nodes_to_update)
 
-        table = format_node_table({node_id: node_registry[node_id] for node_id in nodes_to_update})
+        table = format_node_table({node_id: node_registry[node_id] for node_id in nodes_to_update}, pnp)
 
         columns = "ID", "Name", "HW", "SW", "Git Hash", "CRC", "Mode", "Health"
         table = rich.table.Table(
@@ -457,7 +463,11 @@ async def async_update_single(
             caption=f"Nodes to update to {file.name}",
         )
         for node_id in nodes_to_update:
-            heartbeat, info = node_registry[node_id]
+            entry = node_registry[node_id]
+            heartbeat, info = entry.heartbeat, entry.info
+            if info is None:
+                logger.warning("Node %s: no info available, skipping", node_id)
+                continue
             node_hw_version = f"{info.hardware_version.major}.{info.hardware_version.minor}"
             node_sw_version = f"{info.software_version.major}.{info.software_version.minor}"
             node_vcs = f"{info.software_vcs_revision_id:016x}" if info.software_vcs_revision_id else ""
@@ -489,10 +499,10 @@ async def async_update_single(
             for node_id in nodes_to_update:
                 task_id = progress.add_task(f"Updating node {node_id}...", total=file.stat().st_size)
 
-                def callback(task_id: int, _bytes: int) -> None:
+                def callback(task_id: TaskID, _bytes: int) -> None:
                     progress.update(task_id, completed=_bytes)
 
-                coroutine = client.update(node_id, file, timeout=timeout, callback=partial(callback, task_id))
+                coroutine = client.update(file, node_id, timeout=timeout, callback=partial(callback, task_id))
                 update_tasks.append(asyncio.create_task(coroutine))
 
             results = await asyncio.gather(*update_tasks, return_exceptions=True)

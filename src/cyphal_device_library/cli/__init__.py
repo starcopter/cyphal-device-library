@@ -8,8 +8,8 @@ import rich
 import typer
 from dotenv import load_dotenv
 
+from ..util._logging import UAVCAN_SEVERITY_TO_PYTHON, Errno105Filter
 from ..util.dsdl import get_output_directory
-from ..util.logging import UAVCAN_SEVERITY_TO_PYTHON, Errno105Filter
 from . import dsdl
 from ._util import configure_logging, set_default_usbtingo_env_vars
 
