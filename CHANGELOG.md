@@ -8,11 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- _Nothing yet._
-
-## [0.6.12] - 2026-04-16
-
-### Added
 - GitHub Actions workflows for test and release automation.
 - Makefile `test` target to execute pytest suite in `tests/`.
 - Release helper changelog updates for Keep a Changelog release sections.
