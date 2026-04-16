@@ -8,7 +8,7 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
-    "pycyphal[transport-can-pythoncan]>=1.23.0",
+    "pycyphal[transport-can-pythoncan]>=1.24.5",
     "python-can-usbtingo>=1.0.2",
     "python-dotenv>=1.1.0",
     "python-can[pcan]",
