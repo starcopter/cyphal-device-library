@@ -27,6 +27,12 @@ jobs:
       - name: Compile DSDL sources
         run: uv run cyphal install
 
+      - name: Cache pre-commit environment
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit|${{ env.pythonLocation }}|${{ hashFiles('.pre-commit-config.yaml') }}
+
       - name: Lint and static checks
         run: uv run make check
 
