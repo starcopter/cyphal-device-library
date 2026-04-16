@@ -1,0 +1,39 @@
+name: Test CI
+
+on:
+  workflow_call:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Lint and static checks
+        run: make check
+
+      - name: Verify check made no changes
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "make check modified files. Please run make check locally and commit the updates."
+            git --no-pager diff
+            exit 1
+          fi
+
+      - name: Run tests
+        run: make test

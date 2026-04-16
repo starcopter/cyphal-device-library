@@ -1,12 +1,12 @@
 [project]
 name = "cyphal-device-library"
-version = "0.6.11"
+version = "0.6.12"
 description = "Library to simplify Interaction with Cyphal Devices"
 readme = "README.md"
 authors = [
     { name = "Lasse Fröhner", email = "lasse@starcopter.com" }
 ]
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 dependencies = [
     "pycyphal[transport-can-pythoncan]>=1.23.0",
     "python-can-usbtingo>=1.0.2",
@@ -52,35 +52,6 @@ check-file = true
 extend-ignore-identifiers-re = [
     "PnP"  # Plug and Play
 ]
-
-[tool.bumpversion]
-current_version = "0.6.3"
-parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
-serialize = ["{major}.{minor}.{patch}"]
-search = "{current_version}"
-replace = "{new_version}"
-regex = false
-ignore_missing_version = false
-ignore_missing_files = false
-tag = true
-sign_tags = false
-tag_name = "v{new_version}"
-tag_message = "🔖 {new_version}"
-allow_dirty = false
-commit = true
-message = "🔖 Bump version: {current_version} → {new_version}"
-moveable_tags = [
-    "latest",
-    "v{new_major}.{new_minor}",
-    "v{new_major}"
-]
-commit_args = ""
-setup_hooks = []
-pre_commit_hooks = [
-    "uv lock --upgrade-package cyphal-device-library",
-    "git add uv.lock",
-]
-post_commit_hooks = []
 
 [tool.ty.src]
 include = [
