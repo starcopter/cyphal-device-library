@@ -183,3 +183,8 @@ jobs:
           tag_name: v${{ steps.version.outputs.value }}
           body_path: release-notes.md
           generate_release_notes: true
+
+      - name: Update tag latest to point to new release
+        run: |
+          git tag -f latest
+          git push origin latest --force
