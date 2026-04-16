@@ -25,7 +25,7 @@ jobs:
         run: uv sync --all-groups
 
       - name: Lint and static checks
-        run: make check
+        run: uv run make check
 
       - name: Verify check made no changes
         run: |
@@ -36,4 +36,4 @@ jobs:
           fi
 
       - name: Run tests
-        run: make test
+        run: uv run make test
