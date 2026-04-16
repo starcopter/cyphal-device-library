@@ -72,14 +72,36 @@ jobs:
           git merge --no-ff develop -m "chore(release): merge develop into main for v${{ inputs.version }}"
           git push origin main
 
+      - name: Merge main back into develop
+        run: |
+          git fetch origin develop
+          git checkout -B develop origin/develop
+          git merge --no-ff main -m "chore(release): merge main back into develop for v${{ inputs.version }}"
+          git push origin develop
+
       - name: Tag merged main
         run: |
           git checkout main
           git tag "v${{ inputs.version }}"
           git push origin "v${{ inputs.version }}"
 
+      - name: Build release notes from changelog
+        run: |
+          version="${{ inputs.version }}"
+          awk -v version="$version" '
+            $0 ~ "^## \\[" version "\\]" {in_section=1; print; next}
+            in_section && $0 ~ "^## \\[" {exit}
+            in_section {print}
+          ' CHANGELOG.md > release-notes.md
+
+          if [[ ! -s release-notes.md ]]; then
+            echo "Could not find changelog entry for version ${version}."
+            exit 1
+          fi
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ inputs.version }}
+          body_path: release-notes.md
           generate_release_notes: true
