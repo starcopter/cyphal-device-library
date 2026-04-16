@@ -24,6 +24,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-groups
 
+      - name: Compile DSDL sources
+        run: uv run cyphal install
+
       - name: Lint and static checks
         run: uv run make check
 
