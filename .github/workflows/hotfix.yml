@@ -1,0 +1,107 @@
+name: Hotfix CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: "Hotfix label (for example: pcan-timeout)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  hotfix:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Create hotfix branch name
+        id: branch
+        run: |
+          label="${{ inputs.label }}"
+          sanitized="$(echo "$label" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g')"
+          if [[ -z "$sanitized" ]]; then
+            echo "Hotfix label is empty after sanitization."
+            exit 1
+          fi
+          branch="hotfix/${sanitized}-$(date +%Y%m%d%H%M%S)"
+          echo "name=$branch" >> "$GITHUB_OUTPUT"
+
+      - name: Create branch from main
+        run: |
+          git checkout -b "${{ steps.branch.outputs.name }}"
+
+      - name: Update changelog
+        env:
+          HOTFIX_LABEL: ${{ inputs.label }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          changelog = Path("CHANGELOG.md")
+          if not changelog.exists():
+              raise SystemExit("CHANGELOG.md not found")
+
+          text = changelog.read_text(encoding="utf-8")
+          label = os.environ["HOTFIX_LABEL"].strip()
+          bullet = f"- Hotfix: {label}"
+
+          unreleased_match = re.search(r"(?ms)^## \[Unreleased\]\n(?P<body>.*?)(?=^## \[|\Z)", text)
+          if unreleased_match is None:
+              raise SystemExit("Could not find [Unreleased] section in CHANGELOG.md")
+
+          body = unreleased_match.group("body")
+          if bullet in body:
+              raise SystemExit("Hotfix label already exists in [Unreleased] section")
+
+          fixed_match = re.search(r"(?ms)^### Fixed\n(?P<items>(?:- .*\n)*)", body)
+          if fixed_match:
+              items = fixed_match.group("items")
+              replacement = f"### Fixed\n{items}{bullet}\n"
+              new_body = body[: fixed_match.start()] + replacement + body[fixed_match.end() :]
+          else:
+              suffix = "" if body.endswith("\n\n") else "\n"
+              new_body = f"{body}{suffix}### Fixed\n{bullet}\n"
+
+          updated = text[: unreleased_match.start("body")] + new_body + text[unreleased_match.end("body") :]
+          updated = re.sub(r"\n{3,}", "\n\n", updated).rstrip() + "\n"
+          changelog.write_text(updated, encoding="utf-8")
+          PY
+
+      - name: Commit and push hotfix branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "chore(hotfix): ${{ inputs.label }}"
+          git push -u origin "${{ steps.branch.outputs.name }}"
+
+      - name: Create pull request to main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr create \
+            --base main \
+            --head "${{ steps.branch.outputs.name }}" \
+            --title "hotfix: ${{ inputs.label }}" \
+            --body "This hotfix updates CHANGELOG.md for: ${{ inputs.label }}."
+
+      - name: Create pull request to develop
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr create \
+            --base develop \
+            --head "${{ steps.branch.outputs.name }}" \
+            --title "hotfix: ${{ inputs.label }} (develop)" \
+            --body "This hotfix updates CHANGELOG.md for: ${{ inputs.label }}."
