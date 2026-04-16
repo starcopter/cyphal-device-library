@@ -11,6 +11,12 @@ Create a new python project (e.g. using `uv`):
 Add this as dependecy:  
 `uv add "cyphal-device-library>=0.6.12" git+https://github.com/starcopter/cyphal-device-library`
 
+Update the pycyphal message DSDLs:  
+`uv run cyphal install`
+
+Use the uv .venv:  
+`source .venv/bin/activate`
+
 ### Example pyproject.toml
 
 ```
