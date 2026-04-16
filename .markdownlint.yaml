@@ -1,0 +1,26 @@
+# Default state for all rules
+default: true
+
+# MD013/line-length - Line length
+MD013:
+  # Number of characters
+  line_length: 180
+  # Allow long lines in code blocks
+  code_blocks: false
+  # Allow long lines in tables
+  tables: false
+
+MD007:
+  indent: 4
+
+# MD024/no-duplicate-heading/no-duplicate-header - Multiple headers with same content
+MD024:
+  # Only check sibling headings
+  siblings_only: true
+
+# MD033/no-inline-html - Inline HTML
+MD033:
+  # Allow all HTML
+  allowed_elements: [p, a, em, img, br, span]
+
+MD046: false

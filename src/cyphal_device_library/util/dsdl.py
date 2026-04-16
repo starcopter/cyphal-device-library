@@ -65,7 +65,7 @@ def get_output_directory() -> Path:
             test_file.touch()
             test_file.unlink()
             return path
-        except (OSError, PermissionError):
+        except OSError, PermissionError:
             logger.debug("Skipping %s because it is not writable", path)
             continue
 

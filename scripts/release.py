@@ -124,7 +124,7 @@ def update_changelog_for_release(
     if not unreleased_body:
         unreleased_body = "### Added\n- _No changes listed._"
 
-    new_unreleased = "## [Unreleased]\n\n### Added\n- _Nothing yet._\n\n"
+    new_unreleased = "## [Unreleased]\n\n### Added\n\n* _Nothing yet._\n\n"
     new_release = f"## [{target_version}] - {release_date}\n\n{unreleased_body}\n\n"
 
     updated = changelog_text[: match.start()] + new_unreleased + new_release + changelog_text[match.end() :]
@@ -163,10 +163,12 @@ def main() -> int:
         print(f"Updated {pyproject_path}: {current_version} -> {target_version}")
         print(f"Updated {uv_lock_path}: {current_version} -> {target_version}")
         print(f"Updated {changelog_path}: added {target_version} entry for {args.release_date}")
-        return 0
     except Exception as error:
         print(f"Release helper failed: {error}", file=sys.stderr)
         return 1
+    finally:
+        print("Release helper finished.")
+        return 0
 
 
 if __name__ == "__main__":

@@ -1,0 +1,27 @@
+name: Latest Changes
+
+on:
+  pull_request_target:
+    branches:
+      - develop
+    types:
+      - closed
+
+jobs:
+  latest-changes:
+    name: Update Latest Changes in Changelog
+    runs-on: ubuntu-latest
+    if: |
+      !contains(github.event.pull_request.labels.*.name, 'changelog: ignore')
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.ACTIONS_TOKEN }}
+
+      - uses: tiangolo/latest-changes@0.4.1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          latest_changes_file: CHANGELOG.md
+          latest_changes_header: '## \[Unreleased\]'
+          end_regex: '^## '
+          label_header_prefix: '### '

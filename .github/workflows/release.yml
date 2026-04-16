@@ -8,15 +8,29 @@ on:
             Version to release (for example: 0.6.13)
         required: true
         type: string
+  pull_request:
+    branches:
+      - main
+    types:
+      - closed
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
+  checks: write
+  pull-requests: write
+  statuses: write
 
 jobs:
   test:
+    if: github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/test.yml
 
   release:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     needs: test
 
@@ -45,7 +59,7 @@ jobs:
         run: uv sync --all-groups
 
       - name: Update version and changelog
-        run: uv run python scripts/release.py --target-version "${{ inputs.version }}"
+        run: uv run python scripts/release.py --package-name highdra --target-version "${{ inputs.version }}"
 
       - name: Verify release updated files
         run: |
@@ -54,40 +68,104 @@ jobs:
             exit 1
           fi
 
+      - name: Ensure release tag does not already exist
+        run: |
+          tag="v${{ inputs.version }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null; then
+            echo "Tag ${tag} already exists on origin."
+            exit 1
+          fi
+
       - name: Commit release artifacts
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout develop
+          git fetch origin develop
+          git checkout -B develop origin/develop
           git add pyproject.toml uv.lock CHANGELOG.md
-          git commit -m "chore(release): ${{ inputs.version }}"
+          git commit -m "chore(release): Release to v${{ inputs.version }}"
 
       - name: Push release commit to develop
         run: git push origin HEAD:develop
 
-      - name: Merge develop into main
+      - name: Create release pull request to main
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git fetch origin main
-          git checkout -B main origin/main
-          git merge --no-ff develop -m "chore(release): merge develop into main for v${{ inputs.version }}"
-          git push origin main
+          version="${{ inputs.version }}"
+          title="Release to v${version}"
+          cat > pr-body.md <<EOF
+          Automated release PR for ${version}.
 
-      - name: Merge main back into develop
-        run: |
-          git fetch origin develop
-          git checkout -B develop origin/develop
-          git merge --no-ff main -m "chore(release): merge main back into develop for v${{ inputs.version }}"
-          git push origin develop
+          Latest delelopment changes from develop will be merged into main, and the following release artifacts will be included:
 
-      - name: Tag merged main
+          - Updates pyproject.toml
+          - Updates uv.lock
+          - Updates CHANGELOG.md
+          EOF
+
+          existing_pr_number="$(gh pr list --base main --head develop --state open --json number --jq '.[0].number // empty')"
+          if [[ -n "$existing_pr_number" ]]; then
+            echo "Release PR already exists: #${existing_pr_number}"
+            exit 0
+          fi
+
+          gh pr create \
+            --base main \
+            --head develop \
+            --title "$title" \
+            --body-file pr-body.md
+
+  publish_release:
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.title, 'Release to v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Determine release version
+        id: version
         run: |
-          git checkout main
-          git tag "v${{ inputs.version }}"
-          git push origin "v${{ inputs.version }}"
+          version="$(python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          data = tomllib.loads(Path('pyproject.toml').read_text(encoding='utf-8'))
+          print(data['project']['version'])
+          PY
+          )"
+          if [[ -z "$version" ]]; then
+            echo "Could not determine project version from pyproject.toml"
+            exit 1
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure release tag does not already exist
+        run: |
+          tag="v${{ steps.version.outputs.value }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null; then
+            echo "Tag ${tag} already exists on origin."
+            exit 1
+          fi
+
+      - name: Create and push tag
+        run: |
+          tag="v${{ steps.version.outputs.value }}"
+          git tag "$tag"
+          git push origin "$tag"
 
       - name: Build release notes from changelog
         run: |
-          version="${{ inputs.version }}"
+          version="${{ steps.version.outputs.value }}"
           awk -v version="$version" '
             $0 ~ "^## \\[" version "\\]" {in_section=1; print; next}
             in_section && $0 ~ "^## \\[" {exit}
@@ -102,6 +180,6 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: v${{ inputs.version }}
+          tag_name: v${{ steps.version.outputs.value }}
           body_path: release-notes.md
           generate_release_notes: true

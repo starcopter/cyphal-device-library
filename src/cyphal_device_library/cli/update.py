@@ -382,7 +382,7 @@ def selftest_update_all(
         asyncio.run(_run())
     except KeyboardInterrupt:
         typer.echo("Cancelled by user, exiting.")
-    except (pycyphal.presentation.PortClosedError, asyncio.InvalidStateError):
+    except pycyphal.presentation.PortClosedError, asyncio.InvalidStateError:
         pass
 
 
@@ -419,7 +419,7 @@ def update(
         asyncio.run(_run())
     except KeyboardInterrupt:
         typer.echo("Cancelled by user, exiting.")
-    except (pycyphal.presentation.PortClosedError, asyncio.InvalidStateError):
+    except pycyphal.presentation.PortClosedError, asyncio.InvalidStateError:
         pass
 
 
@@ -547,7 +547,7 @@ def update_all(
         asyncio.run(_run())
     except KeyboardInterrupt:
         typer.echo("Cancelled by user, exiting.")
-    except (pycyphal.presentation.PortClosedError, asyncio.InvalidStateError):
+    except pycyphal.presentation.PortClosedError, asyncio.InvalidStateError:
         pass
 
 
