@@ -2,14 +2,15 @@ name: Test CI
 
 on:
   workflow_call:
-  pull_request:
-  push:
-    branches:
-      - main
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      statuses: write
+      checks: write
+      pull-requests: write
 
     steps:
       - name: Checkout
@@ -20,6 +21,8 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v8.0.0
+        with:
+          enable-cache: true
 
       - name: Install dependencies
         run: uv sync --all-groups
@@ -45,4 +48,8 @@ jobs:
           fi
 
       - name: Run tests
-        run: uv run make test
+        env:
+          term: dumb
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          uv run make test

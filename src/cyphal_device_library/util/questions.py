@@ -1,5 +1,6 @@
 """Utility classes for questions."""
 
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Optional
@@ -43,6 +44,40 @@ class TextQuestion(Question):
 
     async def ask(self) -> str:
         question = questionary.text(
+            message=self.message,
+            instruction=self.instruction,
+            default=self.default if isinstance(self.default, str) else "",
+            validate=self.validate,
+        )
+        return await question.ask_async()
+
+
+class PasswordQuestion(Question):
+    """Password input question."""
+
+    @staticmethod
+    def validate_password(password: str) -> str | bool:
+        if len(password) < 6:
+            return "Password must be at least 6 characters"
+        elif not re.search("[0-9]", password) and not re.search("[A-Z]", password):
+            return "Password must contain a number or an upper-case letter"
+        elif not re.search("[a-z]", password):
+            return "Password must contain a lower-case letter"
+        return True
+
+    def __init__(
+        self,
+        message: str,
+        instruction: str | None = None,
+        default: Optional[str] = None,
+        validate: Optional[Callable[[str], str | bool]] = None,
+    ):
+        super().__init__(message, instruction, default)
+        self.question_type = "password"
+        self.validate: Optional[Callable[[str], str | bool]] = validate or self.validate_password
+
+    async def ask(self) -> str:
+        question = questionary.password(
             message=self.message,
             instruction=self.instruction,
             default=self.default if isinstance(self.default, str) else "",
