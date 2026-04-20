@@ -1,9 +1,9 @@
 """Utility classes for questions."""
 
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Optional
-import re
 
 import questionary
 
