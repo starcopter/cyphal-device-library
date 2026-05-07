@@ -63,8 +63,36 @@ jobs:
 
       - name: Verify release updated files
         run: |
-          if [[ -z "$(git status --porcelain)" ]]; then
+          changed_files=( $(git status --porcelain | awk '{print $2}') )
+
+          if [[ "${#changed_files[@]}" -eq 0 ]]; then
             echo "No release changes were produced."
+            exit 1
+          fi
+
+          allowed_files=("pyproject.toml" "uv.lock" "CHANGELOG.md")
+          for changed_file in "${changed_files[@]}"; do
+            allowed=0
+            for allowed_file in "${allowed_files[@]}"; do
+              if [[ "$changed_file" == "$allowed_file" ]]; then
+                allowed=1
+                break
+              fi
+            done
+
+            if [[ "$allowed" -eq 0 ]]; then
+              echo "Unexpected modified file in release workflow: $changed_file"
+              exit 1
+            fi
+          done
+
+          if [[ ! " ${changed_files[*]} " =~ " pyproject.toml " ]]; then
+            echo "Expected pyproject.toml to be updated by release script."
+            exit 1
+          fi
+
+          if [[ ! " ${changed_files[*]} " =~ " CHANGELOG.md " ]]; then
+            echo "Expected CHANGELOG.md to be updated by release script."
             exit 1
           fi
 
@@ -97,7 +125,7 @@ jobs:
           cat > pr-body.md <<EOF
           Automated release PR for ${version}.
 
-          Latest delelopment changes from develop will be merged into main, and the following release artifacts will be included:
+          Latest development changes from develop will be merged into main, and the following release artifacts will be included:
 
           - Updates pyproject.toml
           - Updates uv.lock
@@ -120,6 +148,8 @@ jobs:
     if: |
       github.event_name == 'pull_request' &&
       github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.ref == 'develop' &&
       startsWith(github.event.pull_request.title, 'Release to v')
     runs-on: ubuntu-latest
     permissions:

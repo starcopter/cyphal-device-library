@@ -78,6 +78,22 @@ jobs:
           changelog.write_text(updated, encoding="utf-8")
           PY
 
+      - name: Verify hotfix updated files
+        run: |
+          changed_files=( $(git status --porcelain | awk '{print $2}') )
+
+          if [[ "${#changed_files[@]}" -eq 0 ]]; then
+            echo "No hotfix changes were produced."
+            exit 1
+          fi
+
+          if [[ "${#changed_files[@]}" -ne 1 || "${changed_files[0]}" != "CHANGELOG.md" ]]; then
+            echo "Hotfix workflow may only modify CHANGELOG.md."
+            printf 'Changed files:\n'
+            printf ' - %s\n' "${changed_files[@]}"
+            exit 1
+          fi
+
       - name: Commit and push hotfix branch
         run: |
           git config user.name "github-actions[bot]"

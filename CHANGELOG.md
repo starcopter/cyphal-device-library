@@ -14,11 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * _Nothing yet._
 
+## [0.6.14] - 2026-05-07
+
+### Added
+
+* Question offer the validate function in base class now (None as default)
+
 ## [0.6.13] - 2026-04-20
 
 ### Added
 
-* _Nothing yet._
+* PasswordQuestion helper class
 
 ## [0.6.12] - 2026-04-16
 
