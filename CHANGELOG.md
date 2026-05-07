@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-* _Nothing yet._
+* Helper for confirm question to parse as bool
 
 ## [0.6.14] - 2026-05-07
 
