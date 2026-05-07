@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-* _Nothing yet._
+* Question offer the validate function in base class now (None as default)
 
 ## [0.6.13] - 2026-04-20
 
