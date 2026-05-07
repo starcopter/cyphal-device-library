@@ -16,11 +16,18 @@ class Question(ABC):
         message: str,
         instruction: str | None = None,
         default: Optional[str | bool] = None,
+        validate: Optional[Callable[[str], str | bool]] = None,
     ):
         self.message: str = message
         self.instruction: str | None = instruction
         self.default: Optional[str | bool] = default
         self.question_type: str = "text"
+        self.validate: Optional[Callable[[str], str | bool]] = validate
+
+    @staticmethod
+    def no_validate(value: str) -> str | bool:
+        """Default validation function that always returns True and no error message."""
+        return True
 
     @abstractmethod
     async def ask(self) -> str | bool:
@@ -38,9 +45,8 @@ class TextQuestion(Question):
         default: Optional[str] = None,
         validate: Optional[Callable[[str], str | bool]] = None,
     ):
-        super().__init__(message, instruction, default)
+        super().__init__(message, instruction, default, validate)
         self.question_type = "text"
-        self.validate: Optional[Callable[[str], str | bool]] = validate
 
     async def ask(self) -> str:
         question = questionary.text(
@@ -53,7 +59,7 @@ class TextQuestion(Question):
 
 
 class PasswordQuestion(Question):
-    """Password input question."""
+    """Password input question. Uses default validation."""
 
     @staticmethod
     def validate_password(password: str) -> str | bool:
@@ -72,9 +78,8 @@ class PasswordQuestion(Question):
         default: Optional[str] = None,
         validate: Optional[Callable[[str], str | bool]] = None,
     ):
-        super().__init__(message, instruction, default)
+        super().__init__(message, instruction, default, validate or self.validate_password)
         self.question_type = "password"
-        self.validate: Optional[Callable[[str], str | bool]] = validate or self.validate_password
 
     async def ask(self) -> str:
         question = questionary.password(
