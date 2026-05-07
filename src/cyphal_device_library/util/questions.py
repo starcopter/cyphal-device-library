@@ -132,3 +132,14 @@ class ConfirmQuestion(Question):
             default=self.default if isinstance(self.default, bool) else True,
         )
         return await question.ask_async()
+
+    @staticmethod
+    def to_bool(value: str | bool) -> bool:
+        """Parse a string answer to a boolean."""
+        if isinstance(value, bool):
+            return value
+        if value.lower() in {"yes", "y", "true", "1", "on", "ok", "confirm"}:
+            return True
+        if value.lower() in {"false", "no", "0", "off", "n", "reject"}:
+            return False
+        raise ValueError(f"Cannot parse boolean value from '{value}'")
