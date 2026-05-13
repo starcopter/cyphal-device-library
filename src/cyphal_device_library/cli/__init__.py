@@ -16,12 +16,15 @@ from ._util import configure_logging, set_default_usbtingo_env_vars
 app = typer.Typer()
 app.add_typer(dsdl.app)
 
+
 try:
-    from . import discover, registry, update
+    from . import discover, execute, registry, status, update
 
     app.add_typer(update.app)
     app.add_typer(discover.app)
     app.add_typer(registry.app)
+    app.add_typer(execute.app)
+    app.add_typer(status.app, name="status")
 except ImportError:
     app.info.epilog = "Run `cyphal install` to make more commands available."
 
@@ -96,8 +99,38 @@ def run() -> None:
     app()
 
 
+def version_callback(show_version: bool) -> None:
+    """Display the version and exit."""
+    if show_version:
+        __version__ = importlib.metadata.version("cyphal-device-library")
+
+        typer.echo(f"This is cyphal-device-library version {__version__}")
+
+        dsdl_dir = get_output_directory()
+        if dsdl_dir.is_dir():
+            last_updated = datetime.fromtimestamp(dsdl_dir.stat().st_ctime).replace(microsecond=0)
+            typer.echo(f"DSDL files compiled to {dsdl_dir}, last updated {last_updated}")
+        else:
+            typer.echo("DSDL files not compiled yet. Run `cyphal install` to compile them.")
+
+        raise typer.Exit()
+
+
+@app.command()
+def version():
+    """Print the version of the CLI."""
+    version_callback(True)
+
+
 @app.callback()
 def main(
+    _version: bool = typer.Option(
+        False,
+        "--version",
+        callback=version_callback,
+        help=version_callback.__doc__,
+        is_eager=True,
+    ),
     verbosity: Annotated[int, typer.Option("--verbose", "-v", count=True)] = 0,
     diagnostic_record_verbosity: Annotated[
         int,
@@ -147,19 +180,3 @@ def main(
 
     Errno105Filter.apply_to("pycyphal.application")
     Errno105Filter.apply_to("pycyphal.presentation")
-
-
-@app.command()
-def version():
-    """Print the version of the CLI."""
-
-    __version__ = importlib.metadata.version("cyphal-device-library")
-
-    typer.echo(f"This is cyphal-device-library version {__version__}")
-
-    dsdl_dir = get_output_directory()
-    if dsdl_dir.is_dir():
-        last_updated = datetime.fromtimestamp(dsdl_dir.stat().st_ctime).replace(microsecond=0)
-        typer.echo(f"DSDL files compiled to {dsdl_dir}, last updated {last_updated}")
-    else:
-        typer.echo("DSDL files not compiled yet. Run `cyphal install` to compile them.")
