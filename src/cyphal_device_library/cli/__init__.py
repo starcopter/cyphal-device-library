@@ -17,11 +17,12 @@ app = typer.Typer()
 app.add_typer(dsdl.app)
 
 try:
-    from . import discover, registry, update
+    from . import discover, execute, registry, update
 
     app.add_typer(update.app)
     app.add_typer(discover.app)
     app.add_typer(registry.app)
+    app.add_typer(execute.app)
 except ImportError:
     app.info.epilog = "Run `cyphal install` to make more commands available."
 
