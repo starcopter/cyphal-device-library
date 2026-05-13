@@ -1,0 +1,55 @@
+name: Prerelease Tag
+
+on:
+  pull_request_target:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: write
+
+jobs:
+  update-prerelease-tag:
+    if: |
+      github.event.pull_request.head.ref == 'develop' &&
+      startsWith(github.event.pull_request.title, 'Release to v')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Move prerelease tag to release PR head
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const tagRef = "tags/prerelease";
+            const tagSha = context.payload.pull_request.head.sha;
+
+            core.info(`Updating prerelease tag to ${tagSha}`);
+
+            try {
+              await github.rest.git.createRef({
+                owner,
+                repo,
+                ref: `refs/${tagRef}`,
+                sha: tagSha,
+              });
+              core.info("Created prerelease tag.");
+            } catch (error) {
+              if (error.status !== 422) {
+                throw error;
+              }
+
+              await github.rest.git.updateRef({
+                owner,
+                repo,
+                ref: tagRef,
+                sha: tagSha,
+                force: true,
+              });
+              core.info("Moved existing prerelease tag.");
+            }
