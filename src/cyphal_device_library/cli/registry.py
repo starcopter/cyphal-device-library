@@ -110,9 +110,7 @@ def read_register(
                 try:
                     parsed_value = _parse_cli_value_for_dtype(value, register.dtype)
                 except (ValueError, json.JSONDecodeError) as ex:
-                    raise typer.BadParameter(
-                        f"Invalid value for {register_name} ({register.dtype}): {ex}"
-                    ) from ex
+                    raise typer.BadParameter(f"Invalid value for {register_name} ({register.dtype}): {ex}") from ex
 
                 success = await registry.set_value(register_name, parsed_value)
                 if not success:
