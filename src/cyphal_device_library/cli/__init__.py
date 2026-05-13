@@ -1,13 +1,17 @@
 import importlib.metadata
 import logging
+import os
+import platform
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Annotated
 
 import rich
 import typer
 from dotenv import load_dotenv
 
+from ..util import SUPPORTED_CAN_INTERFACES, list_available_can_channels
 from ..util._logging import UAVCAN_SEVERITY_TO_PYTHON, Errno105Filter, UAVCANDiagnosticSeverity
 from ..util.dsdl import get_output_directory
 from . import dsdl
@@ -164,3 +168,48 @@ def version():
         typer.echo(f"DSDL files compiled to {dsdl_dir}, last updated {last_updated}")
     else:
         typer.echo("DSDL files not compiled yet. Run `cyphal install` to compile them.")
+
+
+@app.command()
+def doctor():
+    """Print diagnostics about the current runtime and CAN setup."""
+
+    typer.echo("Cyphal CLI doctor")
+    typer.echo(f"Platform: {platform.platform()}")
+    typer.echo(f"Python: {sys.version.split()[0]} ({sys.executable})")
+    typer.echo(f"argv[0]: {sys.argv[0]}")
+
+    launcher = Path(sys.argv[0])
+    if launcher.exists():
+        typer.echo(f"Launcher path: {launcher.resolve()}")
+        try:
+            with launcher.open("r", encoding="utf-8") as handle:
+                first_line = handle.readline().strip()
+            if first_line.startswith("#!"):
+                typer.echo(f"Launcher shebang: {first_line[2:]}")
+        except OSError:
+            typer.echo("Launcher shebang: <unavailable>")
+
+    for package in ["cyphal-device-library", "pycyphal", "python-can", "python-can-usbtingo", "typer"]:
+        try:
+            typer.echo(f"{package}: {importlib.metadata.version(package)}")
+        except importlib.metadata.PackageNotFoundError:
+            typer.echo(f"{package}: <not installed>")
+
+    for key in [
+        "VIRTUAL_ENV",
+        "PYTHONPATH",
+        "UAVCAN__NODE__ID",
+        "UAVCAN__CAN__IFACE",
+        "UAVCAN__CAN__MTU",
+        "UAVCAN__CAN__BITRATE",
+    ]:
+        typer.echo(f"{key}={os.environ.get(key, '')}")
+
+    typer.echo(f"Supported CAN interfaces: {', '.join(SUPPORTED_CAN_INTERFACES)}")
+    try:
+        channels = list_available_can_channels()
+    except Exception as ex:  # pragma: no cover - depends on host drivers/hardware
+        typer.echo(f"Available channels: <detection failed: {ex!s}>")
+    else:
+        typer.echo(f"Available channels: {', '.join(channels) if channels else '<none>'}")
