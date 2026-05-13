@@ -99,7 +99,7 @@ def run() -> None:
     app()
 
 
-def version_callback(show_version: bool = True) -> None:
+def version_callback(show_version: bool) -> None:
     """Display the version and exit."""
     if show_version:
         __version__ = importlib.metadata.version("cyphal-device-library")
@@ -119,13 +119,13 @@ def version_callback(show_version: bool = True) -> None:
 @app.command()
 def version():
     """Print the version of the CLI."""
-    version_callback()
+    version_callback(True)
 
 
 @app.callback()
 def main(
     _version: bool = typer.Option(
-        None,
+        False,
         "--version",
         callback=version_callback,
         help=version_callback.__doc__,
