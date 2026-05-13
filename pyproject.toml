@@ -9,7 +9,7 @@ authors = [
 requires-python = ">=3.14"
 dependencies = [
     "pycyphal[transport-can-pythoncan]>=1.24.5",
-    "python-can-usbtingo>=1.0.2",
+    "python-can-usbtingo",
     "python-dotenv>=1.1.0",
     "python-can[pcan]",
     "rich>=13.0.0",
@@ -34,6 +34,9 @@ dev = [
     "ruff>=0.12.7",
     "ty>=0.0.1a16",
 ]
+
+[tool.uv.sources]
+python-can-usbtingo = { git = "https://github.com/Finwood/python-can-usbtingo", branch = "develop" }
 
 [build-system]
 requires = ["hatchling"]

@@ -1,17 +1,13 @@
 import importlib.metadata
 import logging
-import os
-import platform
 import sys
 from datetime import datetime
-from pathlib import Path
 from typing import Annotated
 
 import rich
 import typer
 from dotenv import load_dotenv
 
-from ..util import SUPPORTED_CAN_INTERFACES, list_available_can_channels
 from ..util._logging import UAVCAN_SEVERITY_TO_PYTHON, Errno105Filter, UAVCANDiagnosticSeverity
 from ..util.dsdl import get_output_directory
 from . import dsdl
@@ -20,13 +16,15 @@ from ._util import configure_logging, set_default_usbtingo_env_vars
 app = typer.Typer()
 app.add_typer(dsdl.app)
 
+
 try:
-    from . import discover, execute, registry, update
+    from . import discover, execute, registry, status, update
 
     app.add_typer(update.app)
     app.add_typer(discover.app)
     app.add_typer(registry.app)
     app.add_typer(execute.app)
+    app.add_typer(status.app, name="status")
 except ImportError:
     app.info.epilog = "Run `cyphal install` to make more commands available."
 
@@ -101,8 +99,38 @@ def run() -> None:
     app()
 
 
+def version_callback(show_version: bool = True) -> None:
+    """Display the version and exit."""
+    if show_version:
+        __version__ = importlib.metadata.version("cyphal-device-library")
+
+        typer.echo(f"This is cyphal-device-library version {__version__}")
+
+        dsdl_dir = get_output_directory()
+        if dsdl_dir.is_dir():
+            last_updated = datetime.fromtimestamp(dsdl_dir.stat().st_ctime).replace(microsecond=0)
+            typer.echo(f"DSDL files compiled to {dsdl_dir}, last updated {last_updated}")
+        else:
+            typer.echo("DSDL files not compiled yet. Run `cyphal install` to compile them.")
+
+        raise typer.Exit()
+
+
+@app.command()
+def version():
+    """Print the version of the CLI."""
+    version_callback()
+
+
 @app.callback()
 def main(
+    _version: bool = typer.Option(
+        None,
+        "--version",
+        callback=version_callback,
+        help=version_callback.__doc__,
+        is_eager=True,
+    ),
     verbosity: Annotated[int, typer.Option("--verbose", "-v", count=True)] = 0,
     diagnostic_record_verbosity: Annotated[
         int,
@@ -152,64 +180,3 @@ def main(
 
     Errno105Filter.apply_to("pycyphal.application")
     Errno105Filter.apply_to("pycyphal.presentation")
-
-
-@app.command()
-def version():
-    """Print the version of the CLI."""
-
-    __version__ = importlib.metadata.version("cyphal-device-library")
-
-    typer.echo(f"This is cyphal-device-library version {__version__}")
-
-    dsdl_dir = get_output_directory()
-    if dsdl_dir.is_dir():
-        last_updated = datetime.fromtimestamp(dsdl_dir.stat().st_ctime).replace(microsecond=0)
-        typer.echo(f"DSDL files compiled to {dsdl_dir}, last updated {last_updated}")
-    else:
-        typer.echo("DSDL files not compiled yet. Run `cyphal install` to compile them.")
-
-
-@app.command()
-def doctor():
-    """Print diagnostics about the current runtime and CAN setup."""
-
-    typer.echo("Cyphal CLI doctor")
-    typer.echo(f"Platform: {platform.platform()}")
-    typer.echo(f"Python: {sys.version.split()[0]} ({sys.executable})")
-    typer.echo(f"argv[0]: {sys.argv[0]}")
-
-    launcher = Path(sys.argv[0])
-    if launcher.exists():
-        typer.echo(f"Launcher path: {launcher.resolve()}")
-        try:
-            with launcher.open("r", encoding="utf-8") as handle:
-                first_line = handle.readline().strip()
-            if first_line.startswith("#!"):
-                typer.echo(f"Launcher shebang: {first_line[2:]}")
-        except OSError:
-            typer.echo("Launcher shebang: <unavailable>")
-
-    for package in ["cyphal-device-library", "pycyphal", "python-can", "python-can-usbtingo", "typer"]:
-        try:
-            typer.echo(f"{package}: {importlib.metadata.version(package)}")
-        except importlib.metadata.PackageNotFoundError:
-            typer.echo(f"{package}: <not installed>")
-
-    for key in [
-        "VIRTUAL_ENV",
-        "PYTHONPATH",
-        "UAVCAN__NODE__ID",
-        "UAVCAN__CAN__IFACE",
-        "UAVCAN__CAN__MTU",
-        "UAVCAN__CAN__BITRATE",
-    ]:
-        typer.echo(f"{key}={os.environ.get(key, '')}")
-
-    typer.echo(f"Supported CAN interfaces: {', '.join(SUPPORTED_CAN_INTERFACES)}")
-    try:
-        channels = list_available_can_channels()
-    except Exception as ex:  # pragma: no cover - depends on host drivers/hardware
-        typer.echo(f"Available channels: <detection failed: {ex!s}>")
-    else:
-        typer.echo(f"Available channels: {', '.join(channels) if channels else '<none>'}")

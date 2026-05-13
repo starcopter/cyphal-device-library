@@ -245,7 +245,7 @@ dev = [
 requires-dist = [
     { name = "pycyphal", extras = ["transport-can-pythoncan"], specifier = ">=1.24.5" },
     { name = "python-can", extras = ["pcan"] },
-    { name = "python-can-usbtingo", specifier = ">=1.0.2" },
+    { name = "python-can-usbtingo", git = "https://github.com/Finwood/python-can-usbtingo?branch=develop" },
     { name = "python-dotenv", specifier = ">=1.1.0" },
     { name = "questionary" },
     { name = "rich", specifier = ">=13.0.0" },
@@ -822,14 +822,10 @@ serial = [
 [[package]]
 name = "python-can-usbtingo"
 version = "1.0.2"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/Finwood/python-can-usbtingo?branch=develop#40678025127efca36efeea5b40a20bec142fb71f" }
 dependencies = [
     { name = "libusb1" },
     { name = "python-can" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/d8/fd/6bf96c96656264502a5b13dc887d7b3293d95cca006b18dc3f0e508ffe11/python-can-usbtingo-1.0.2.tar.gz", hash = "sha256:932cc75e715d9e2268b10c0e516fa156679fa7cebb3ceeab942e0ff1459ca0bf", size = 12710, upload-time = "2024-01-12T09:20:07.702Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9f/5a/a181fbfdaf76b78dd08f546ad030db8b75165607f0318980b2b413f05e56/python_can_usbtingo-1.0.2-py3-none-any.whl", hash = "sha256:1760468fe4e0f920e30c2b7293263749aa031bf7555604dbb4f3a6cfc89009f0", size = 13390, upload-time = "2024-01-12T09:20:05.831Z" },
 ]
 
 [[package]]
