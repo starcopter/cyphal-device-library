@@ -47,7 +47,11 @@ def cmd(
     """Execute uavcan.node.ExecuteCommand on one node and print the return status code."""
 
     async def _run() -> int:
-        can_transport = await get_can_transport(ctx)
+        try:
+            can_transport = await get_can_transport(ctx)
+        except Exception as e:
+            rich.print(f"[red]:rotating_light: Failed to initialize CAN transport: {e}[/red]")
+            return 1
         command_number = _parse_command_number(cmd_nr)
         request = uavcan.node.ExecuteCommand_1.Request(command_number)
 
