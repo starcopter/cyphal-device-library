@@ -3,6 +3,7 @@ import contextlib
 import importlib
 import logging
 import re
+import time
 from collections.abc import AsyncGenerator, Callable, Container, Iterable
 from pathlib import Path
 from typing import Self, Type, TypeVar
@@ -104,9 +105,6 @@ class Device:
                     elif discover_registers:
                         tg.create_task(self.registry.discover_registers())
             except BaseException as exc:
-                if not self._is_expected_init_exception(exc):
-                    self._initialization_error = exc
-                    raise
                 logger.debug("Device %s initialization interrupted during shutdown", self._node_id, exc_info=exc)
             finally:
                 self._initialized.set()
@@ -126,41 +124,14 @@ class Device:
         if self._initialization_error is not None:
             raise RuntimeError(f"Initialization failed for device node {self.node_id}") from self._initialization_error
 
-    async def _stop_initialization_task(self) -> None:
-        """Cancel and await the background initialization task if it is still active."""
-        task = self._initialize_task
-        if task is None:
-            return
-        if task.done():
-            return
-
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-
     def _handle_initialization_task_done(self, task: asyncio.Task[None]) -> None:
         """Consume initialization task exceptions to avoid unretrieved-future warnings."""
         with contextlib.suppress(asyncio.CancelledError):
             exc = task.exception()
             if exc is None:
                 return
-            if self._is_expected_init_exception(exc):
-                logger.debug("Device %s initialization task closed during shutdown", self._node_id, exc_info=exc)
-                return
-            logger.warning("Device %s initialization task failed", self._node_id, exc_info=exc)
-
-    def _is_expected_init_exception(self, exc: BaseException) -> bool:
-        if isinstance(exc, BaseExceptionGroup):
-            return all(self._is_expected_init_exception(item) for item in exc.exceptions)
-        return isinstance(
-            exc,
-            (
-                asyncio.CancelledError,
-                asyncio.InvalidStateError,
-                pycyphal.presentation.PortClosedError,
-                pycyphal.transport.ResourceClosedError,
-            ),
-        )
+            logger.debug("Device %s initialization task closed during shutdown", self._node_id, exc_info=exc)
+            return
 
     @classmethod
     async def discover(
@@ -236,7 +207,10 @@ class Device:
 
     async def __aexit__(self, exc_t, exc_v, exc_tb) -> None:
         """Async context manager exit point."""
-        await self._stop_initialization_task()
+        self.close()
+        if self._initialize_task is not None and not self._initialize_task.done():
+            await self._initialize_task
+        await asyncio.sleep(0.01)  # give the event loop a moment to process any pending cancellation
         await self.client.__aexit__(None, None, None)
 
     def close(self) -> None:
@@ -244,6 +218,8 @@ class Device:
         task = self._initialize_task
         if task is not None and not task.done():
             task.cancel()
+            time.sleep(0.01)  # give the event loop a moment to process the cancellation and avoid warnings
+
         self.client.close()
 
     def __del__(self) -> None:
