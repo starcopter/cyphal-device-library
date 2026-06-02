@@ -105,7 +105,11 @@ def discover(
     """
 
     async def _run() -> None:
-        can_transport = await get_can_transport(ctx)
+        try:
+            can_transport = await get_can_transport(ctx)
+        except Exception as e:
+            rich.print(f"[red]:rotating_light: Failed to initialize CAN transport: {e}[/red]")
+            return
         pnp = bool(ctx.parent.params.get("pnp", False)) if ctx.parent else False
 
         from ..util import can_transport_bitrate, can_transport_cyphal_node_id, can_transport_interface
