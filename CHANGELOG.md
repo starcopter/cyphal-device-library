@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-* _Nothing yet._
+* Device exit add of 10ms grace period
 
 ## [0.6.17] - 2026-06-02
 
