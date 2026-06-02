@@ -91,19 +91,28 @@ class Device:
         self._node_id = node_id
         self._initialized = asyncio.Event()
         self._info: uavcan.node.GetInfo_1.Response | None = None
+        self._initialize_task: asyncio.Task[None] | None = None
+        self._initialization_error: BaseException | None = None
 
         async def initialize():
-            async with asyncio.TaskGroup() as tg:
-                tg.create_task(self.get_info())
-                if isinstance(discover_registers, Iterable):
-                    for name in discover_registers:
-                        tg.create_task(self.registry.refresh_register(name, full=False))
-                elif discover_registers:
-                    tg.create_task(self.registry.discover_registers())
+            try:
+                async with asyncio.TaskGroup() as tg:
+                    tg.create_task(self.get_info())
+                    if isinstance(discover_registers, Iterable):
+                        for name in discover_registers:
+                            tg.create_task(self.registry.refresh_register(name, full=False))
+                    elif discover_registers:
+                        tg.create_task(self.registry.discover_registers())
+            except BaseException as exc:
+                if not self._is_expected_init_exception(exc):
+                    self._initialization_error = exc
+                    raise
+                logger.debug("Device %s initialization interrupted during shutdown", self._node_id, exc_info=exc)
+            finally:
+                self._initialized.set()
 
-            self._initialized.set()
-
-        asyncio.get_event_loop().create_task(initialize())
+        self._initialize_task = asyncio.get_event_loop().create_task(initialize())
+        self._initialize_task.add_done_callback(self._handle_initialization_task_done)
 
     async def wait_for_initialization(self, timeout: float | None = None) -> None:
         """Wait for the device to be initialized.
@@ -114,6 +123,44 @@ class Device:
         """
         async with asyncio.timeout(timeout):
             await self._initialized.wait()
+        if self._initialization_error is not None:
+            raise RuntimeError(f"Initialization failed for device node {self.node_id}") from self._initialization_error
+
+    async def _stop_initialization_task(self) -> None:
+        """Cancel and await the background initialization task if it is still active."""
+        task = self._initialize_task
+        if task is None:
+            return
+        if task.done():
+            return
+
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    def _handle_initialization_task_done(self, task: asyncio.Task[None]) -> None:
+        """Consume initialization task exceptions to avoid unretrieved-future warnings."""
+        with contextlib.suppress(asyncio.CancelledError):
+            exc = task.exception()
+            if exc is None:
+                return
+            if self._is_expected_init_exception(exc):
+                logger.debug("Device %s initialization task closed during shutdown", self._node_id, exc_info=exc)
+                return
+            logger.warning("Device %s initialization task failed", self._node_id, exc_info=exc)
+
+    def _is_expected_init_exception(self, exc: BaseException) -> bool:
+        if isinstance(exc, BaseExceptionGroup):
+            return all(self._is_expected_init_exception(item) for item in exc.exceptions)
+        return isinstance(
+            exc,
+            (
+                asyncio.CancelledError,
+                asyncio.InvalidStateError,
+                pycyphal.presentation.PortClosedError,
+                pycyphal.transport.ResourceClosedError,
+            ),
+        )
 
     @classmethod
     async def discover(
@@ -189,7 +236,20 @@ class Device:
 
     async def __aexit__(self, exc_t, exc_v, exc_tb) -> None:
         """Async context manager exit point."""
+        await self._stop_initialization_task()
         await self.client.__aexit__(None, None, None)
+
+    def close(self) -> None:
+        """Close the device client and cancel pending initialization work."""
+        task = self._initialize_task
+        if task is not None and not task.done():
+            task.cancel()
+        self.client.close()
+
+    def __del__(self) -> None:
+        """Best-effort cleanup for non-context-managed usage."""
+        with contextlib.suppress(Exception):
+            self.close()
 
     @property
     def node_id(self) -> int:
