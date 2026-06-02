@@ -369,7 +369,11 @@ def selftest_update_all(
 
     async def _run() -> None:
         pnp = bool(ctx.parent.params.get("pnp", False)) if ctx.parent else False
-        can_transport = await get_can_transport(ctx)
+        try:
+            can_transport = await get_can_transport(ctx)
+        except Exception as e:
+            rich.print(f"[red]:rotating_light: Failed to initialize CAN transport: {e}[/red]")
+            return
         await async_selftest_update_all(
             parallel_updates=parallel_updates or get_default_parallel_updates(),
             software_path=software_path,
@@ -405,7 +409,11 @@ def update(
 
     async def _run() -> None:
         pnp = bool(ctx.parent.params.get("pnp", False)) if ctx.parent else False
-        can_transport = await get_can_transport(ctx)
+        try:
+            can_transport = await get_can_transport(ctx)
+        except Exception as e:
+            rich.print(f"[red]:rotating_light: Failed to initialize CAN transport: {e}[/red]")
+            return
         await async_update_single(
             can_transport=can_transport,
             node_ids=node_set,
@@ -533,7 +541,11 @@ def update_all(
 
     async def _run() -> None:
         pnp = bool(ctx.parent.params.get("pnp", False)) if ctx.parent else False
-        can_transport = await get_can_transport(ctx)
+        try:
+            can_transport = await get_can_transport(ctx)
+        except Exception as e:
+            rich.print(f"[red]:rotating_light: Failed to initialize CAN transport: {e}[/red]")
+            return
         await async_update_all(
             can_transport=can_transport,
             parallel_updates=parallel_updates or get_default_parallel_updates(),

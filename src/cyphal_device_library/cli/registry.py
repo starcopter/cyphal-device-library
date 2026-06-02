@@ -79,7 +79,11 @@ def print_registry(ctx: typer.Context, node_id: int):
     """Print the registry for a given node ID."""
 
     async def _run() -> None:
-        can_transport = await get_can_transport(ctx)
+        try:
+            can_transport = await get_can_transport(ctx)
+        except Exception as e:
+            rich.print(f"[red]:rotating_light: Failed to initialize CAN transport: {e}[/red]")
+            return
 
         with Client("cyphal.print-registry", transport=can_transport) as client:
             registry = Registry(node_id, client.node.make_client)
@@ -99,7 +103,11 @@ def read_register(
     """Read one register, or write it if a value is provided."""
 
     async def _run() -> None:
-        can_transport = await get_can_transport(ctx)
+        try:
+            can_transport = await get_can_transport(ctx)
+        except Exception as e:
+            rich.print(f"[red]:rotating_light: Failed to initialize CAN transport: {e}[/red]")
+            return
 
         with Client("cyphal.read-register", transport=can_transport) as client:
             registry = Registry(node_id, client.node.make_client)
