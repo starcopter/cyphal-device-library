@@ -46,7 +46,12 @@ def configure_can_registers(
         resolved_mtu = mtu if mtu is not None else 8
     else:
         resolved_bitrate = list(bitrate)
-        resolved_mtu = mtu if mtu is not None else 64
+        if len(resolved_bitrate) != 2:
+            raise ValueError("Only 2 bitrates are supported")
+        if resolved_bitrate[0] == resolved_bitrate[1]:
+            resolved_mtu = mtu if mtu is not None else 8
+        else:
+            resolved_mtu = mtu if mtu is not None else 64
 
     registry["uavcan.can.iface"] = String(interface)
     registry["uavcan.can.mtu"] = Natural16([resolved_mtu])
