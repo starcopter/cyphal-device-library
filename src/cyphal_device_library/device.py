@@ -69,6 +69,8 @@ class Device:
         client: Client,
         node_id: int,
         discover_registers: bool | Iterable[str] = True,
+        *,
+        owns_client: bool = True,
     ) -> None:
         """Initialize a new Device instance.
 
@@ -79,6 +81,11 @@ class Device:
                 If `True`, all registers will be discovered.
                 If a list of strings, only the specified registers will be looked up.
                 If `False`, no registers will be discovered automatically.
+            owns_client: When ``True`` (default), :meth:`close` shuts down the shared
+                :class:`~cyphal_device_library.client.Client`. Set to ``False`` when
+                several devices or helpers (e.g. :class:`~cyphal_device_library.publication_watch.BusPublicationWatcher`)
+                share one client; the caller must keep the client open and call
+                :meth:`close` explicitly when dropping each device.
 
         Raises:
             ValueError: If the node_id is the same as the client's own node ID.
@@ -87,6 +94,7 @@ class Device:
             raise ValueError("Device node_id cannot be the same as client node ID")
 
         self.client = client
+        self._owns_client = owns_client
         self.registry = Registry(node_id, self.client.node.make_client)
 
         self._node_id = node_id
@@ -201,7 +209,8 @@ class Device:
             ...     # Device is ready for use
             ...     print(device.registry)
         """
-        await self.client.__aenter__()
+        if self._owns_client:
+            await self.client.__aenter__()
         await self.wait_for_initialization()
         return self
 
@@ -211,16 +220,18 @@ class Device:
         if self._initialize_task is not None and not self._initialize_task.done():
             await self._initialize_task
         await asyncio.sleep(0.01)  # give the event loop a moment to process any pending cancellation
-        await self.client.__aexit__(None, None, None)
+        if self._owns_client:
+            await self.client.__aexit__(None, None, None)
 
     def close(self) -> None:
-        """Close the device client and cancel pending initialization work."""
+        """Cancel pending initialization and close the client when this device owns it."""
         task = self._initialize_task
         if task is not None and not task.done():
             task.cancel()
             time.sleep(0.01)  # give the event loop a moment to process the cancellation and avoid warnings
 
-        self.client.close()
+        if self._owns_client:
+            self.client.close()
 
     def __del__(self) -> None:
         """Best-effort cleanup for non-context-managed usage."""

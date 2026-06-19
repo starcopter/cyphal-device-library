@@ -107,5 +107,6 @@ def discover_publication_ports(registry: _PublicationRegistrySource) -> list[Pub
 
 async def discover_publication_ports_remote(registry: Registry) -> list[PublicationPort]:
     """Discover registers on the remote node and return publication ports."""
+    # TODO: maybe get only registers that are needed for the publication ports?
     await registry.discover_registers()
     return discover_publication_ports(registry)

@@ -292,7 +292,12 @@ class BusPublicationWatcher:
             if port.dt_ms is not None:
                 register_names.append(f"uavcan.pub.{port.port_name}.dt_ms")
 
-        device = Device(self.client, state.node_id, discover_registers=register_names or False)
+        device = Device(
+            self.client,
+            state.node_id,
+            discover_registers=register_names or False,
+            owns_client=False,
+        )
         await device.wait_for_initialization(timeout=10.0)
         state.device = device
 
@@ -322,7 +327,10 @@ class BusPublicationWatcher:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         state.unstructured_tasks.clear()
-        state.device = None
+
+        if state.device is not None:
+            state.device.close()
+            state.device = None
 
     async def _subscriber_loop(self, state: DeviceWatchState, port: PublicationPort) -> None:
         assert state.device is not None
