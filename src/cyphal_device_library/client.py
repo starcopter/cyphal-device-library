@@ -362,8 +362,9 @@ class Client:
                 if new_entry.info.unique_id is not None and self.uid is not None:
                     if new_entry.info.unique_id.tobytes().hex() == self.uid and updated_node_id != node_id:
                         self.logger.warning(
-                            "Node (identical UID: %s) restarted with new Node ID: %i",
+                            "Node (identical UID: %s, Node ID: %i) restarted with new Node ID: %i",
                             self.uid,
+                            node_id,
                             updated_node_id,
                         )
                         self.restart_new_node_id = updated_node_id

@@ -1,8 +1,6 @@
 import asyncio
 import contextlib
-import importlib
 import logging
-import re
 import time
 from collections.abc import AsyncGenerator, Callable, Container, Iterable
 from pathlib import Path
@@ -12,7 +10,9 @@ import pycyphal
 import uavcan.node
 
 from .client import Client
+from .publications import PublicationPort, discover_publication_ports_remote
 from .registry import NativeValue, Registry
+from .util.message_types import load_message_type
 
 logger = logging.getLogger(__name__)
 MessageClass = TypeVar("MessageClass")
@@ -579,62 +579,60 @@ class Device:
         assert isinstance(port_id, int)
         return port_id
 
+    async def discover_publication_ports(self) -> list[PublicationPort]:
+        """Discover publication ports configured on this device.
+
+        Reads the device's ``uavcan.pub.<port_name>.{id,type,dt_ms}`` registers and
+        returns a catalog of :class:`~cyphal_device_library.publications.PublicationPort`
+        entries. If the registry has not been populated yet, registers are discovered on
+        the remote node first.
+
+        Each entry contains the port name, subject ID, DSDL type name, optional
+        publication period (``dt_ms``), and a ``parse_status`` of ``ok`` or
+        ``missing_dsdl`` when the compiled Python type is not available locally.
+
+        Returns:
+            list[PublicationPort]: Publication ports sorted by port name.
+
+        Example:
+            >>> ports = await device.discover_publication_ports()
+            >>> for port in ports:
+            ...     print(port.port_name, port.subject_id, port.parse_status)
+            power_data 6060 ok
+            state 6062 missing_dsdl
+            >>> subscriber = device.get_subscription(ports[0].port_name)
+            >>> async for message, _ in subscriber:
+            ...     print(message)
+            ...     break
+        """
+        return await discover_publication_ports_remote(self.registry)
+
     def _get_port_type(self, port_name: str) -> Type[MessageClass]:
         """Get the message type for a given port name.
 
-        Private method that extracts the port type from the registry and loads the corresponding Python type.
+        Private method that reads ``uavcan.pub.<port_name>.type`` from the registry and
+        resolves the corresponding DSDL Python class via
+        :func:`~cyphal_device_library.util.message_types.load_message_type`.
 
         Args:
-            port_name: Name of the port.
+            port_name: Name of the publication port (without the ``uavcan.pub.`` prefix).
 
         Returns:
             Type[MessageClass]: The message type class.
 
         Raises:
-            AssertionError: If the port type is not a string or doesn't match the expected format.
+            AssertionError: If the port type register value is not a string.
             RuntimeError: If the port type cannot be found or loaded.
 
         Note:
-            This method follows the Cyphal Specification v1.0 versioning principles:
-            - For major version > 0: loads the newest major version type
-            - For major version = 0: loads the exact type (major.minor)
+            Type resolution follows Cyphal Specification v1.0 versioning principles
+            (see :func:`~cyphal_device_library.util.message_types.load_message_type`):
+            for major version > 0 the newest major type is loaded; for major version 0
+            the exact ``major.minor`` type is loaded.
         """
         port_type = self.registry[f"uavcan.pub.{port_name}.type"].value
         assert isinstance(port_type, str)
-
-        match = re.match(
-            r"(?P<namespace>[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*)\."
-            r"(?P<shortname>[a-zA-Z_][a-zA-Z0-9_]*)\.(?P<major>\d+)\.(?P<minor>\d+)",
-            port_type,
-        )
-        assert match
-
-        try:
-            namespace = importlib.import_module(match.group("namespace"))
-            # Cyphal Specification v1.0, page 42, section 3.8.3.2 "Versioning principles":
-            #
-            #   In order to ensure a deterministic application behavior and ensure a robust migration path as
-            #   data type definitions evolve, all data type definitions that share the same full name and the
-            #   same major version number shall be semantically compatible with each other.
-            #
-            #   An exception to the above rules applies when the major version number is zero. Data type
-            #   definitions bearing the major version number of zero are not subjected to any compatibility
-            #   requirements.
-            #
-            # Therefore, to reach maximum compatibility, we will attempt to load the exact type (major.minor)
-            # for data types with a major version number of zero, and the newest major type for data types
-            # with a major version number greater than zero.
-
-            py_type_name = "_".join(
-                match.group("shortname", "major")
-                if int(match.group("major")) > 0
-                else match.group("shortname", "major", "minor")
-            )
-            Message: Type[MessageClass] = getattr(namespace, py_type_name)
-        except (ImportError, AttributeError) as ex:
-            raise RuntimeError(f"Port {port_name}: No matching type found for {port_type}") from ex
-
-        return Message
+        return load_message_type(port_type)
 
     def get_subscription(self, port_name: str) -> pycyphal.presentation.Subscriber:
         """Get a subscriber for a specific port on the device.

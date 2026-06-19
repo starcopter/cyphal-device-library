@@ -518,7 +518,7 @@ class Register:
         new_timestamp: int = response.timestamp.microsecond
         if new_timestamp < last_timestamp and new_timestamp != 0:
             _logger.debug(
-                "Timestamp of register '%s' decreased (%d -> %d): this may be an indication of network time issues.",
+                "Timestamp of register '%s' decreased (%d -> %d): this may be an indication of network time issues.",  # TODO/FIXME: after a restart, the timestamp may decrease! -> this message should be avoided in that case.
                 name,
                 last_timestamp,
                 new_timestamp,
