@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+* _Nothing yet._
+
+## [0.7.0] - 2026-06-19
+
+### Added
+
 * `load_message_type()` helper to resolve DSDL type name strings to Python message classes (`util/message_types.py`).
 * `serialize_message()` helper to convert DSDL message instances to JSON-safe structures (`util/message_serialize.py`).
 * Publication port discovery from `uavcan.pub.*` registers (`PublicationPort`, `discover_publication_ports()`, `discover_publication_ports_remote()`).
