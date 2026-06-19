@@ -152,7 +152,11 @@ async def test_stop_tears_down_watched_devices() -> None:
     client = _mock_client(node_id=1)
     watcher = BusPublicationWatcher(client)
     mock_device = MagicMock()
-    hang_task = asyncio.create_task(asyncio.Event().wait())
+
+    async def _hang_forever() -> None:
+        await asyncio.Event().wait()
+
+    hang_task = asyncio.create_task(_hang_forever())
 
     watcher.devices[42] = DeviceWatchState(
         node_id=42,
