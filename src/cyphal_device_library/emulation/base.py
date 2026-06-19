@@ -31,7 +31,7 @@ class EmulationNodeConfig:
         publications: Port name → field dict merged onto profile publication defaults.
     """
 
-    registers: dict[str, Any] = field(default_factory=dict)
+    registers: RegisterMap = field(default_factory=dict)
     publications: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
