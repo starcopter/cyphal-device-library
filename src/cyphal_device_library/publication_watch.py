@@ -406,8 +406,7 @@ class BusPublicationWatcher:
         parse_status: str,
     ) -> None:
         stats = state.port_stats.setdefault(subject_id, PortStats())
-        stats.record(byte_count=len(str(fields)))
-
+        stats.record(byte_count=len(str(fields).encode("utf-8")))
         parsed = ParsedMessage(
             node_id=state.node_id,
             port_name=port_name,
