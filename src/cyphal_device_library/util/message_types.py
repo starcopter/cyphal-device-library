@@ -24,7 +24,7 @@ def load_message_type(type_name: str) -> type[MessageClass]:
         ValueError: If the type name format is invalid.
         RuntimeError: If the type cannot be imported.
     """
-    match = _DSDL_TYPE_RE.match(str(type_name).strip())
+    match = _DSDL_TYPE_RE.fullmatch(str(type_name).strip())
     if not match:
         raise ValueError(f"Invalid DSDL type name: {type_name!r}")
 
