@@ -204,7 +204,7 @@ class BusPublicationWatcher:
         return batch
 
     def build_status_payload(self, *, message_limit: int = DEFAULT_NOTIFY_BATCH) -> dict[str, Any]:
-        """Build a websocket-safe status snapshot."""
+        """Build a status snapshot."""
         devices_payload = []
         for state in sorted(self.devices.values(), key=lambda item: item.node_id):
             devices_payload.append(

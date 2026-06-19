@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * `BusPublicationWatcher` for bus-wide publication watching using `Client` and `Device` (typed subscriptions, unstructured fallback, per-port stats, unknown-port tracking).
 * `Device.discover_publication_ports()` to list publication ports configured on a remote device.
 * Unit tests for message type loading and publication port discovery.
+* Generic Cyphal device emulation (`cyphal_device_library.emulation`): profiles, `EmulatedCyphalNode`, `EmulatedNodeHost`, and local register helpers reusing `registry.NativeValue`.
 
 ### Changed
 
