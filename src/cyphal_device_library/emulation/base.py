@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import abc
+import secrets
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import pycyphal.application
 import uavcan.node
 
-from .local_registry import apply_native_register_overrides
 from .publication_spec import PublicationPortSpec
 
 if TYPE_CHECKING:
@@ -24,23 +24,32 @@ class EmulationNodeConfig:
     """Runtime configuration for one emulated node.
 
     Produced by :meth:`DeviceEmulationProfile.merge_add_config` and passed to
-    :func:`~cyphal_device_library.emulation.factory.create_emulated_node`.
+    :class:`~cyphal_device_library.emulation.node.EmulatedCyphalNode`.
 
     Attributes:
         registers: Register name → native value overrides applied after defaults.
         publications: Port name → field dict merged onto profile publication defaults.
+        unique_id: Optional 16-byte node UID reported by GetInfo.
+        software_vcs_revision_id: Optional Git revision reported by GetInfo.
+        software_image_crc: Optional firmware image CRC list reported by GetInfo.
+        hardware_version: Optional hardware version override for GetInfo.
+        software_version: Optional software version override for GetInfo.
     """
 
     registers: RegisterMap = field(default_factory=dict)
     publications: dict[str, dict[str, Any]] = field(default_factory=dict)
+    unique_id: bytes | None = None
+    software_vcs_revision_id: int | None = None
+    software_image_crc: list[int] | None = None
+    hardware_version: uavcan.node.Version_1 | None = None
+    software_version: uavcan.node.Version_1 | None = None
 
 
 class DeviceEmulationProfile(abc.ABC):
     """Declare registers, publications, and bus behavior for one device type.
 
     Subclass this to describe how an emulated node behaves on the CAN bus.
-    Profiles are consumed by :class:`~cyphal_device_library.emulation.node.EmulatedCyphalNode`
-    and :class:`~cyphal_device_library.emulation.host.EmulatedNodeHost`.
+    Profiles are consumed by :class:`~cyphal_device_library.emulation.node.EmulatedCyphalNode`.
 
     Required class attributes:
         device_type: Short identifier (e.g. ``"bms"``).
@@ -124,15 +133,38 @@ class DeviceEmulationProfile(abc.ABC):
             if isinstance(incoming, dict):
                 port_config.update(incoming)
             publications[spec.port_name] = port_config
-        return EmulationNodeConfig(registers=registers, publications=publications)
 
-    def apply_register_overrides(
-        self,
-        node: pycyphal.application.Node,
-        config: EmulationNodeConfig,
-    ) -> None:
-        """Apply JSON register overrides onto a running node registry."""
-        apply_native_register_overrides(node.registry, config.registers)
+        node_info = payload.get("node_info") or {}
+        unique_id = _parse_unique_id(node_info.get("unique_id", payload.get("unique_id")))
+        software_vcs_revision_id = node_info.get("software_vcs_revision_id", payload.get("software_vcs_revision_id"))
+        software_image_crc = node_info.get("software_image_crc", payload.get("software_image_crc"))
+        hardware_version = _parse_version(node_info.get("hardware_version", payload.get("hardware_version")))
+        software_version = _parse_version(node_info.get("software_version", payload.get("software_version")))
+
+        return EmulationNodeConfig(
+            registers=registers,
+            publications=publications,
+            unique_id=unique_id,
+            software_vcs_revision_id=software_vcs_revision_id,
+            software_image_crc=software_image_crc,
+            hardware_version=hardware_version,
+            software_version=software_version,
+        )
+
+    def build_node_info(self, config: EmulationNodeConfig) -> pycyphal.application.NodeInfo:
+        """Build the GetInfo payload for one emulated node."""
+        unique_id = config.unique_id if config.unique_id is not None else secrets.token_bytes(16)
+        info = pycyphal.application.NodeInfo(
+            name=self.cyphal_name,
+            hardware_version=config.hardware_version or self.default_hardware_version,
+            software_version=config.software_version or self.default_software_version,
+            unique_id=unique_id,
+        )
+        if config.software_vcs_revision_id is not None:
+            info.software_vcs_revision_id = int(config.software_vcs_revision_id)
+        if config.software_image_crc is not None:
+            info.software_image_crc = [int(value) for value in config.software_image_crc]
+        return info
 
     @abc.abstractmethod
     def start_background_tasks(
@@ -164,3 +196,23 @@ class DeviceEmulationProfile(abc.ABC):
             uavcan.node.ExecuteCommand_1_3.Response.STATUS_BAD_COMMAND,
             "Command not implemented",
         )
+
+
+def _parse_unique_id(value: Any) -> bytes | None:
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, str):
+        return bytes.fromhex(value)
+    raise TypeError(f"unique_id must be bytes or hex string, got {type(value).__name__}")
+
+
+def _parse_version(value: Any) -> uavcan.node.Version_1 | None:
+    if value is None:
+        return None
+    if isinstance(value, uavcan.node.Version_1):
+        return value
+    if isinstance(value, dict):
+        return uavcan.node.Version_1(major=int(value["major"]), minor=int(value["minor"]))
+    raise TypeError(f"version must be Version_1 or dict, got {type(value).__name__}")

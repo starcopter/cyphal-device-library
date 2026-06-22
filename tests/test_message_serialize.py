@@ -80,9 +80,10 @@ def test_serialize_message_empty_dsdl_message_falls_back_to_str() -> None:
 
 
 def test_serialize_message_numpy_object_array_of_scalars() -> None:
-    import uavcan.si.unit.voltage
-    import starcopter.highdra.bms as bms
     import json
+
+    import starcopter.highdra.bms as bms
+    import uavcan.si.unit.voltage
 
     power_data = bms.PowerData_0_2()
     for index in range(power_data.vcells.size):
@@ -94,8 +95,9 @@ def test_serialize_message_numpy_object_array_of_scalars() -> None:
 
 
 def test_ensure_json_serializable_repairs_legacy_scalar_arrays() -> None:
-    import uavcan.si.unit.voltage
     import json
+
+    import uavcan.si.unit.voltage
 
     legacy = {
         "vcells": [

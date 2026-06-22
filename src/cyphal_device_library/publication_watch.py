@@ -19,7 +19,7 @@ from .client import Client
 from .device import Device
 from .publications import PublicationPort, discover_publication_ports_remote
 from .registry import Registry, registry_to_json_entries
-from .util.message_serialize import serialize_message, ensure_json_serializable
+from .util.message_serialize import ensure_json_serializable, serialize_message
 
 LOGGER = logging.getLogger(__name__)
 
@@ -503,9 +503,7 @@ class BusPublicationWatcher:
     @staticmethod
     def _resolve_port_name(state: DeviceWatchState, subject_id: int) -> str | None:
         """Return the canonical publication port name for one subject ID."""
-        matches = sorted(
-            port.port_name for port in state.publications.values() if port.subject_id == subject_id
-        )
+        matches = sorted(port.port_name for port in state.publications.values() if port.subject_id == subject_id)
         return matches[0] if matches else None
 
     async def _promiscuous_loop(self) -> None:

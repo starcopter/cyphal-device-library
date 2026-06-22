@@ -58,6 +58,13 @@ def configure_can_registers(
     registry["uavcan.can.bitrate"] = Natural32(resolved_bitrate)
 
 
+def configure_standard_service_registers(registry: Any) -> None:
+    """Populate built-in Cyphal service port registers for GetInfo and register access."""
+    registry["uavcan.srv.get_info.id"] = Natural16([430])
+    registry["uavcan.srv.register.list.id"] = Natural16([380])
+    registry["uavcan.srv.register.access.id"] = Natural16([381])
+
+
 def apply_native_register_overrides(
     registry: Any,
     overrides: dict[str, NativeValue],

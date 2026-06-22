@@ -209,6 +209,7 @@ async def test_device_loop_notifies_when_device_is_registered(instant_sleep: Non
 
     await _await_device_setup_tasks(watcher)
 
+
 @pytest.mark.asyncio
 async def test_stop_tears_down_watched_devices() -> None:
     client = _mock_client(node_id=1)
