@@ -4,7 +4,7 @@
 
 import asyncio
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 from typing import Any, Self, cast
@@ -85,7 +85,7 @@ class Client:
         self.node_tracker.get_info_priority = pycyphal.transport.Priority.LOW
         self.node_tracker.add_update_handler(self._log_node_changes)
 
-        self.firmware_images: dict[str, Sequence[bytes]] = {}
+        self.firmware_images: dict[str, bytes] = {}
         self.update_callbacks: dict[int, Callable[[int], None]] = {}
         self.srv_file_read = self.node.get_server(uavcan.file.Read_1)
         self.node.add_lifetime_hooks(
@@ -362,8 +362,9 @@ class Client:
                 if new_entry.info.unique_id is not None and self.uid is not None:
                     if new_entry.info.unique_id.tobytes().hex() == self.uid and updated_node_id != node_id:
                         self.logger.warning(
-                            "Node (identical UID: %s) restarted with new Node ID: %i",
+                            "Node (identical UID: %s, Node ID: %i) restarted with new Node ID: %i",
                             self.uid,
+                            node_id,
                             updated_node_id,
                         )
                         self.restart_new_node_id = updated_node_id
@@ -596,4 +597,6 @@ class Client:
                 progress = request.offset + len(data)
                 self.logger.debug("Update callback called for node %i: %i bytes", meta.client_node_id, progress)
                 callback(progress)
-            return uavcan.file.Read_1.Response(data=uavcan.primitive.Unstructured_1(np.frombuffer(data, np.uint8)))
+            return uavcan.file.Read_1.Response(
+                data=uavcan.primitive.Unstructured_1(np.frombuffer(data, dtype=np.uint8))
+            )

@@ -10,9 +10,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+* `BusPublicationWatcher` no longer shuts down its shared `Client` when a watched node disappears; `Device` gained an `owns_client` flag (default `True`) so shared-client users can tear down devices without closing the bus client.
+
 ### Added
 
 * _Nothing yet._
+
+## [0.7.0] - 2026-06-19
+
+### Added
+
+* `load_message_type()` helper to resolve DSDL type name strings to Python message classes (`util/message_types.py`).
+* `serialize_message()` helper to convert DSDL message instances to JSON-safe structures (`util/message_serialize.py`).
+* Publication port discovery from `uavcan.pub.*` registers (`PublicationPort`, `discover_publication_ports()`, `discover_publication_ports_remote()`).
+* `BusPublicationWatcher` for bus-wide publication watching using `Client` and `Device` (typed subscriptions, unstructured fallback, per-port stats, unknown-port tracking).
+* `Device.discover_publication_ports()` to list publication ports configured on a remote device.
+* Unit tests for message type loading and publication port discovery.
+* Generic Cyphal device emulation (`cyphal_device_library.emulation`): profiles, `EmulatedCyphalNode`, `EmulatedNodeHost`, and local register helpers reusing `registry.NativeValue`.
+
+### Changed
+
+* Node-restart warning in `Client` now includes the previous node ID when a device reappears with a new ID.
 
 ## [0.6.18] - 2026-06-02
 
