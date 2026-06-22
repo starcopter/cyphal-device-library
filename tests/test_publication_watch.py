@@ -222,6 +222,49 @@ async def test_setup_device_uses_typed_and_unstructured_subscriptions() -> None:
 
 
 @pytest.mark.asyncio
+async def test_setup_device_pushes_registry_snapshot() -> None:
+    client = _mock_client(node_id=1)
+    notifications: list[None] = []
+    watcher = BusPublicationWatcher(
+        client,
+        on_state_changed=lambda: notifications.append(None),
+    )
+    typed_port = PublicationPort(
+        port_name="status",
+        subject_id=6060,
+        type_name="uavcan.primitive.Empty.1.0",
+        message_type=load_message_type("uavcan.primitive.Empty.1.0"),
+        parse_status="ok",
+    )
+
+    mock_device = MagicMock()
+    mock_device.wait_for_initialization = AsyncMock()
+
+    with (
+        patch(
+            "cyphal_device_library.publication_watch.discover_publication_ports_remote",
+            AsyncMock(return_value=[typed_port]),
+        ),
+        patch(
+            "cyphal_device_library.publication_watch.registry_to_json_entries",
+            return_value=[{"name": "uavcan.pub.status.id", "dtype": "natural16[1]", "value": [6060]}],
+        ) as serialize_registry,
+        patch("cyphal_device_library.publication_watch.Device", return_value=mock_device),
+        patch.object(watcher, "_ensure_unstructured_subscription", AsyncMock()),
+    ):
+        state = DeviceWatchState(node_id=42, device_info={"node_id": 42})
+        await watcher._setup_device(state)
+        for task in state.subscriber_tasks.values():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    serialize_registry.assert_called_once()
+    assert state.registry_entries[0]["name"] == "uavcan.pub.status.id"
+    assert notifications == [None]
+
+
+@pytest.mark.asyncio
 async def test_teardown_device_cancels_tasks_and_closes_device() -> None:
     client = _mock_client()
     watcher = BusPublicationWatcher(client)

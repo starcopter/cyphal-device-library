@@ -7,6 +7,7 @@ import contextlib
 import logging
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -17,7 +18,7 @@ import uavcan.primitive
 from .client import Client
 from .device import Device
 from .publications import PublicationPort, discover_publication_ports_remote
-from .registry import Registry
+from .registry import Registry, registry_to_json_entries
 from .util.message_serialize import serialize_message, ensure_json_serializable
 
 LOGGER = logging.getLogger(__name__)
@@ -104,6 +105,7 @@ class DeviceWatchState:
     unstructured_tasks: dict[int, asyncio.Task[None]] = field(default_factory=dict)
     port_stats: dict[int, PortStats] = field(default_factory=dict)
     known_subject_ids: set[int] = field(default_factory=set)
+    registry_entries: list[dict[str, Any]] = field(default_factory=list)
 
 
 class BusPublicationWatcher:
@@ -157,10 +159,12 @@ class BusPublicationWatcher:
         *,
         max_messages: int = DEFAULT_MAX_MESSAGES,
         max_messages_per_port: int = DEFAULT_MAX_MESSAGES_PER_PORT,
+        on_state_changed: Callable[[], None] | None = None,
     ) -> None:
         self.client = client
         self.max_messages = max_messages
         self.max_messages_per_port = max_messages_per_port
+        self._on_state_changed = on_state_changed
         self.devices: dict[int, DeviceWatchState] = {}
         self.unknown_ports: dict[int, dict[int, PortStats]] = {}
         self.message_buffer: deque[ParsedMessage] = deque(maxlen=max_messages)
@@ -237,6 +241,7 @@ class BusPublicationWatcher:
                 {
                     **state.device_info,
                     "publications": [port.to_dict() for port in state.publications.values()],
+                    "registry": state.registry_entries,
                 }
             )
 
@@ -302,6 +307,8 @@ class BusPublicationWatcher:
         # List uavcan.pub.* registers and build the publication catalog.
         registry = Registry(state.node_id, self.client.node.make_client)
         publications = await discover_publication_ports_remote(registry)
+        state.registry_entries = registry_to_json_entries(registry)
+        self._notify_state_changed()
         state.publications = {port.port_name: port for port in publications}
         state.known_subject_ids = {port.subject_id for port in publications}
 
@@ -487,6 +494,10 @@ class BusPublicationWatcher:
         node_stats = self.unknown_ports.setdefault(node_id, {})
         stats = node_stats.setdefault(subject_id, PortStats())
         stats.record(byte_count=byte_count)
+
+    def _notify_state_changed(self) -> None:
+        if self._on_state_changed is not None:
+            self._on_state_changed()
 
     @staticmethod
     def _serialize_node_entry(node_id: int, entry: Any) -> dict[str, Any]:

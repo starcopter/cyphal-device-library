@@ -103,6 +103,35 @@ def _is_nan_value(value: NativeValue) -> bool:
     return isinstance(value, float) and math.isnan(value)
 
 
+def native_value_to_json(value: NativeValue) -> Any:
+    """Convert a register native value to a JSON-serializable structure."""
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        return {"_type": "bytes", "hex": value.hex()}
+    if isinstance(value, list):
+        return [native_value_to_json(item) if isinstance(item, bytes) else item for item in value]
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    return value
+
+
+def registry_to_json_entries(registry: "Registry") -> list[dict[str, Any]]:
+    """Serialize all registers in a registry for websocket payloads."""
+    entries: list[dict[str, Any]] = []
+    for register in sorted(registry, key=lambda item: item.name.lower()):
+        entries.append(
+            {
+                "name": register.name,
+                "dtype": register.dtype,
+                "value": native_value_to_json(register.value),
+                "mutable": register.mutable,
+                "persistent": register.persistent,
+            }
+        )
+    return entries
+
+
 class Registry:
     """Registry to interact with registers on a single remote Cyphal node.
 
