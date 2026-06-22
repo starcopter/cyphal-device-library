@@ -18,7 +18,7 @@ from .client import Client
 from .device import Device
 from .publications import PublicationPort, discover_publication_ports_remote
 from .registry import Registry
-from .util.message_serialize import serialize_message
+from .util.message_serialize import serialize_message, ensure_json_serializable
 
 LOGGER = logging.getLogger(__name__)
 
@@ -76,6 +76,7 @@ class ParsedMessage:
     transfer_id: int | None
     fields: dict[str, Any]
     parse_status: str = "ok"
+    sequence: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -85,8 +86,9 @@ class ParsedMessage:
             "type_name": self.type_name,
             "timestamp_unix": self.timestamp_unix,
             "transfer_id": self.transfer_id,
-            "fields": self.fields,
+            "fields": ensure_json_serializable(self.fields),
             "parse_status": self.parse_status,
+            "sequence": self.sequence,
         }
 
 
@@ -162,7 +164,9 @@ class BusPublicationWatcher:
         self.devices: dict[int, DeviceWatchState] = {}
         self.unknown_ports: dict[int, dict[int, PortStats]] = {}
         self.message_buffer: deque[ParsedMessage] = deque(maxlen=max_messages)
+        self._port_message_history: dict[tuple[int, int], deque[ParsedMessage]] = {}
         self._pending_messages: list[ParsedMessage] = []
+        self._message_sequence = 0
         self._stop_event = asyncio.Event()
         self._device_loop_task: asyncio.Task[None] | None = None
         self._promiscuous_task: asyncio.Task[None] | None = None
@@ -196,14 +200,36 @@ class BusPublicationWatcher:
                 await self._teardown_device(state)
             self.devices.clear()
             self.unknown_ports.clear()
+            self._port_message_history.clear()
 
-    def drain_pending_messages(self, *, limit: int = DEFAULT_NOTIFY_BATCH) -> list[ParsedMessage]:
-        """Return and clear pending messages for push notifications."""
+    def build_message_history_payload(self) -> list[dict[str, Any]]:
+        """Return the retained per-subject message history for UI synchronization."""
+        result: list[dict[str, Any]] = []
+        for bucket in self._port_message_history.values():
+            for message in bucket:
+                result.append(message.to_dict())
+        result.sort(key=lambda item: float(item.get("timestamp_unix", 0)))
+        return result
+
+    def _drop_port_message_history(self, node_id: int) -> None:
+        for key in [item for item in self._port_message_history if item[0] == node_id]:
+            self._port_message_history.pop(key, None)
+
+    def drain_pending_messages(self, *, limit: int | None = None) -> list[ParsedMessage]:
+        """Return and clear pending messages for push notifications.
+
+        When *limit* is ``None``, all pending messages are returned. Otherwise at
+        most *limit* oldest pending messages are returned.
+        """
+        if limit is None:
+            batch = self._pending_messages[:]
+            self._pending_messages.clear()
+            return batch
         batch = self._pending_messages[:limit]
         del self._pending_messages[:limit]
         return batch
 
-    def build_status_payload(self, *, message_limit: int = DEFAULT_NOTIFY_BATCH) -> dict[str, Any]:
+    def build_status_payload(self, *, message_limit: int | None = None) -> dict[str, Any]:
         """Build a status snapshot."""
         devices_payload = []
         for state in sorted(self.devices.values(), key=lambda item: item.node_id):
@@ -222,10 +248,7 @@ class BusPublicationWatcher:
         port_stats_payload = []
         for state in self.devices.values():
             for subject_id, stats in state.port_stats.items():
-                port_name = next(
-                    (port.port_name for port in state.publications.values() if port.subject_id == subject_id),
-                    None,
-                )
+                port_name = self._resolve_port_name(state, subject_id)
                 port_stats_payload.append(
                     stats.to_dict(node_id=state.node_id, port_name=port_name, subject_id=subject_id)
                 )
@@ -233,6 +256,7 @@ class BusPublicationWatcher:
         return {
             "devices": devices_payload,
             "messages": [message.to_dict() for message in self.drain_pending_messages(limit=message_limit)],
+            "message_history": self.build_message_history_payload(),
             "unknown_ports": unknown_payload,
             "port_stats": port_stats_payload,
             "updated_at_unix": time.time(),
@@ -265,6 +289,7 @@ class BusPublicationWatcher:
                 if state is not None:
                     await self._teardown_device(state)
                 self.unknown_ports.pop(node_id, None)
+                self._drop_port_message_history(node_id)
 
             # Refresh heartbeat/name metadata for nodes still online.
             for node_id, entry in entries.items():
@@ -301,19 +326,32 @@ class BusPublicationWatcher:
         await device.wait_for_initialization(timeout=10.0)
         state.device = device
 
-        # Typed subscription when DSDL is available; unstructured fallback otherwise.
+        subscribed_subjects: set[int] = set()
+        typed_by_subject: dict[int, PublicationPort] = {}
         for port in publications:
             if port.parse_status != "ok" or port.message_type is None:
-                await self._ensure_unstructured_subscription(state, port.subject_id)
                 continue
+            existing = typed_by_subject.get(port.subject_id)
+            if existing is None or port.port_name < existing.port_name:
+                typed_by_subject[port.subject_id] = port
+
+        for port in typed_by_subject.values():
+            subscribed_subjects.add(port.subject_id)
             task = asyncio.create_task(
                 self._subscriber_loop(state, port),
                 name=f"pubwatch-sub-{state.node_id}-{port.port_name}",
             )
             state.subscriber_tasks[port.port_name] = task
 
+        for port in publications:
+            if port.subject_id in subscribed_subjects:
+                continue
+            await self._ensure_unstructured_subscription(state, port.subject_id)
+            subscribed_subjects.add(port.subject_id)
+
         # Observe heartbeat on the standard subject even when not in the pub catalog.
-        await self._ensure_unstructured_subscription(state, HEARTBEAT_SUBJECT_ID)
+        if HEARTBEAT_SUBJECT_ID not in subscribed_subjects:
+            await self._ensure_unstructured_subscription(state, HEARTBEAT_SUBJECT_ID)
 
     async def _teardown_device(self, state: DeviceWatchState) -> None:
         for task in list(state.subscriber_tasks.values()):
@@ -376,15 +414,12 @@ class BusPublicationWatcher:
             if metadata.source_node_id != state.node_id:
                 continue
 
-            port_name = None
-            parse_status = "missing_dsdl"
+            port_name = self._resolve_port_name(state, subject_id)
             if subject_id in state.known_subject_ids:
-                # Catalogued port but no local DSDL — keep hex payload, retain port name.
-                port = next((item for item in state.publications.values() if item.subject_id == subject_id), None)
-                port_name = port.port_name if port else None
+                parse_status = "missing_dsdl"
             else:
-                # Subject not listed in uavcan.pub.* — count as unknown traffic.
                 self._record_unknown(state.node_id, subject_id, byte_count=len(bytes(message.value)))
+                parse_status = "missing_dsdl"
 
             raw = bytes(message.value)
             await self._record_message(
@@ -396,6 +431,14 @@ class BusPublicationWatcher:
                 transfer_id=getattr(metadata, "transfer_id", None),
                 parse_status=parse_status,
             )
+
+    @staticmethod
+    def _resolve_port_name(state: DeviceWatchState, subject_id: int) -> str | None:
+        """Return the canonical publication port name for one subject ID."""
+        matches = sorted(
+            port.port_name for port in state.publications.values() if port.subject_id == subject_id
+        )
+        return matches[0] if matches else None
 
     async def _promiscuous_loop(self) -> None:
         """Reserved for future transport-level promiscuous capture."""
@@ -413,8 +456,13 @@ class BusPublicationWatcher:
         transfer_id: int | None,
         parse_status: str,
     ) -> None:
+        canonical_port_name = self._resolve_port_name(state, subject_id)
+        if canonical_port_name is not None:
+            port_name = canonical_port_name
+
         stats = state.port_stats.setdefault(subject_id, PortStats())
         stats.record(byte_count=len(str(fields).encode("utf-8")))
+        self._message_sequence += 1
         parsed = ParsedMessage(
             node_id=state.node_id,
             port_name=port_name,
@@ -424,11 +472,16 @@ class BusPublicationWatcher:
             transfer_id=transfer_id,
             fields=fields,
             parse_status=parse_status,
+            sequence=self._message_sequence,
         )
         self.message_buffer.append(parsed)  # rolling history for status queries
         self._pending_messages.append(parsed)  # batch drained by build_status_payload / notify
-        if len(self._pending_messages) > self.max_messages:
-            del self._pending_messages[: len(self._pending_messages) - self.max_messages]
+        history_key = (state.node_id, subject_id)
+        port_history = self._port_message_history.get(history_key)
+        if port_history is None:
+            port_history = deque(maxlen=self.max_messages_per_port)
+            self._port_message_history[history_key] = port_history
+        port_history.append(parsed)
 
     def _record_unknown(self, node_id: int, subject_id: int, *, byte_count: int) -> None:
         node_stats = self.unknown_ports.setdefault(node_id, {})

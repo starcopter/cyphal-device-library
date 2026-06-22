@@ -388,7 +388,7 @@ async def test_record_message_updates_stats_and_pending_queue() -> None:
     assert len(watcher.message_buffer) == 2
     assert watcher.message_buffer[0].fields["index"] == 1
     assert watcher.message_buffer[1].fields["index"] == 2
-    assert len(watcher._pending_messages) == 2
+    assert len(watcher._pending_messages) == 3
     assert state.port_stats[6060].count == 3
 
 
@@ -429,6 +429,7 @@ def test_drain_pending_messages_and_build_status_payload() -> None:
     assert payload["devices"][0]["node_id"] == 42
     assert payload["devices"][0]["publications"][0]["port_name"] == "status"
     assert payload["messages"][0]["port_name"] == "status"
+    assert payload["message_history"] == []
     assert payload["unknown_ports"][0]["node_id"] == 99
     assert payload["unknown_ports"][0]["subject_id"] == 8080
     assert payload["port_stats"][0]["count"] == 2
@@ -437,6 +438,32 @@ def test_drain_pending_messages_and_build_status_payload() -> None:
     batch = watcher.drain_pending_messages(limit=1)
     assert batch == []
     assert "updated_at_unix" in payload
+
+
+def test_build_status_payload_includes_per_subject_message_history() -> None:
+    client = _mock_client()
+    watcher = BusPublicationWatcher(client, max_messages_per_port=3)
+    state = DeviceWatchState(node_id=42, device_info={"node_id": 42})
+    watcher.devices[42] = state
+
+    for index in range(4):
+        asyncio.run(
+            watcher._record_message(
+                state=state,
+                port_name="temp_data",
+                subject_id=6061,
+                type_name="test.Type.1.0",
+                fields={"index": index},
+                transfer_id=index,
+                parse_status="ok",
+            )
+        )
+
+    payload = watcher.build_status_payload()
+    history = payload["message_history"]
+    assert len(history) == 3
+    assert [item["fields"]["index"] for item in history] == [1, 2, 3]
+    assert state.port_stats[6061].count == 4
 
 
 def test_serialize_node_entry_without_info() -> None:

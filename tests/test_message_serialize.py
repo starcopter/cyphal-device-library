@@ -4,7 +4,7 @@ import numpy as np
 import uavcan.node
 import uavcan.primitive
 
-from cyphal_device_library.util.message_serialize import serialize_message
+from cyphal_device_library.util.message_serialize import ensure_json_serializable, serialize_message
 
 
 def test_serialize_message_none_and_scalars() -> None:
@@ -77,6 +77,35 @@ def test_serialize_message_dsdl_field_traversal() -> None:
 def test_serialize_message_empty_dsdl_message_falls_back_to_str() -> None:
     empty = uavcan.primitive.Empty_1_0()
     assert serialize_message(empty) == str(empty)
+
+
+def test_serialize_message_numpy_object_array_of_scalars() -> None:
+    import uavcan.si.unit.voltage
+    import starcopter.highdra.bms as bms
+    import json
+
+    power_data = bms.PowerData_0_2()
+    for index in range(power_data.vcells.size):
+        power_data.vcells[index] = uavcan.si.unit.voltage.Scalar_1_0(volt=float(index))
+
+    payload = serialize_message(power_data)
+    assert payload["vcells"] == [{"volt": float(index)} for index in range(6)]
+    json.dumps(payload)
+
+
+def test_ensure_json_serializable_repairs_legacy_scalar_arrays() -> None:
+    import uavcan.si.unit.voltage
+    import json
+
+    legacy = {
+        "vcells": [
+            uavcan.si.unit.voltage.Scalar_1_0(volt=1.0),
+            uavcan.si.unit.voltage.Scalar_1_0(volt=2.0),
+        ]
+    }
+    repaired = ensure_json_serializable(legacy)
+    assert repaired == {"vcells": [{"volt": 1.0}, {"volt": 2.0}]}
+    json.dumps(repaired)
 
 
 def test_serialize_message_unknown_object_falls_back_to_str() -> None:
