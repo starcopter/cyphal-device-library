@@ -106,6 +106,7 @@ class DeviceWatchState:
     port_stats: dict[int, PortStats] = field(default_factory=dict)
     known_subject_ids: set[int] = field(default_factory=set)
     registry_entries: list[dict[str, Any]] = field(default_factory=list)
+    setup_task: asyncio.Task[None] | None = None
 
 
 class BusPublicationWatcher:
@@ -174,6 +175,7 @@ class BusPublicationWatcher:
         self._stop_event = asyncio.Event()
         self._device_loop_task: asyncio.Task[None] | None = None
         self._promiscuous_task: asyncio.Task[None] | None = None
+        self._setup_tasks: dict[int, asyncio.Task[None]] = {}
         self._lock = asyncio.Lock()
 
     @property
@@ -198,6 +200,13 @@ class BusPublicationWatcher:
                     await task
         self._device_loop_task = None
         self._promiscuous_task = None
+
+        for task in list(self._setup_tasks.values()):
+            task.cancel()
+        for task in list(self._setup_tasks.values()):
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        self._setup_tasks.clear()
 
         async with self._lock:
             for state in list(self.devices.values()):
@@ -274,7 +283,7 @@ class BusPublicationWatcher:
             current_ids = set(entries)
             known_ids = set(self.devices)
 
-            # New nodes: discover publications and start per-port subscribers.
+            # New nodes: register immediately, then discover publications in parallel.
             for node_id in current_ids - known_ids:
                 if node_id == self.client.node.id:
                     continue
@@ -282,13 +291,12 @@ class BusPublicationWatcher:
                 device_info = self._serialize_node_entry(node_id, entry)
                 async with self._lock:
                     self.devices[node_id] = DeviceWatchState(node_id=node_id, device_info=device_info)
-                try:
-                    await self._setup_device(self.devices[node_id])
-                except Exception as exc:
-                    LOGGER.warning("Failed to set up publication watch for node %s: %s", node_id, exc)
+                self._notify_state_changed()
+                self._start_device_setup(node_id)
 
-            # Departed nodes: cancel subscribers and drop cached state.
+            # Departed nodes: cancel in-flight setup, subscribers, and cached state.
             for node_id in known_ids - current_ids:
+                await self._cancel_device_setup(node_id)
                 async with self._lock:
                     state = self.devices.pop(node_id, None)
                 if state is not None:
@@ -303,10 +311,53 @@ class BusPublicationWatcher:
 
             await asyncio.sleep(0.5)
 
+    def _start_device_setup(self, node_id: int) -> None:
+        existing = self._setup_tasks.get(node_id)
+        if existing is not None and not existing.done():
+            return
+
+        task = asyncio.create_task(self._setup_device_task(node_id), name=f"pubwatch-setup-{node_id}")
+        self._setup_tasks[node_id] = task
+        state = self.devices.get(node_id)
+        if state is not None:
+            state.setup_task = task
+
+    async def _cancel_device_setup(self, node_id: int) -> None:
+        task = self._setup_tasks.pop(node_id, None)
+        if task is None:
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    async def _setup_device_task(self, node_id: int) -> None:
+        try:
+            state = self.devices.get(node_id)
+            if state is None:
+                return
+            await self._setup_device(state)
+            if self.devices.get(node_id) is not state:
+                return
+            self._notify_state_changed()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            LOGGER.warning("Failed to set up publication watch for node %s: %s", node_id, exc)
+        finally:
+            self._setup_tasks.pop(node_id, None)
+            state = self.devices.get(node_id)
+            if state is not None:
+                state.setup_task = None
+
+    def _device_still_active(self, state: DeviceWatchState) -> bool:
+        return self.devices.get(state.node_id) is state
+
     async def _setup_device(self, state: DeviceWatchState) -> None:
         # List uavcan.pub.* registers and build the publication catalog.
         registry = Registry(state.node_id, self.client.node.make_client)
         publications = await discover_publication_ports_remote(registry)
+        if not self._device_still_active(state):
+            return
         state.registry_entries = registry_to_json_entries(registry)
         self._notify_state_changed()
         state.publications = {port.port_name: port for port in publications}
@@ -331,6 +382,9 @@ class BusPublicationWatcher:
             owns_client=False,
         )
         await device.wait_for_initialization(timeout=10.0)
+        if not self._device_still_active(state):
+            device.close()
+            return
         state.device = device
 
         subscribed_subjects: set[int] = set()
@@ -343,6 +397,8 @@ class BusPublicationWatcher:
                 typed_by_subject[port.subject_id] = port
 
         for port in typed_by_subject.values():
+            if not self._device_still_active(state):
+                return
             subscribed_subjects.add(port.subject_id)
             task = asyncio.create_task(
                 self._subscriber_loop(state, port),
@@ -361,6 +417,11 @@ class BusPublicationWatcher:
             await self._ensure_unstructured_subscription(state, HEARTBEAT_SUBJECT_ID)
 
     async def _teardown_device(self, state: DeviceWatchState) -> None:
+        if state.setup_task is not None and not state.setup_task.done():
+            state.setup_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await state.setup_task
+            state.setup_task = None
         for task in list(state.subscriber_tasks.values()):
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

@@ -63,6 +63,13 @@ async def _run_device_loop_once(watcher: BusPublicationWatcher) -> None:
         await watcher._device_loop()
 
 
+async def _await_device_setup_tasks(watcher: BusPublicationWatcher) -> None:
+    """Wait for any in-flight per-device setup tasks."""
+    tasks = list(watcher._setup_tasks.values())
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 @pytest.mark.asyncio
 async def test_start_and_stop_lifecycle(instant_sleep: None) -> None:
     client = _mock_client()
@@ -97,6 +104,7 @@ async def test_device_loop_adds_remote_nodes(instant_sleep: None) -> None:
     watcher._setup_device = _setup_device  # type: ignore[method-assign]
 
     await _run_device_loop_once(watcher)
+    await _await_device_setup_tasks(watcher)
 
     assert setup_calls == [42]
     assert 42 in watcher.devices
@@ -146,6 +154,60 @@ async def test_device_loop_refreshes_existing_node_metadata(instant_sleep: None)
     assert watcher.devices[42].device_info["uptime_s"] == 99
     assert watcher.devices[42].device_info["vssc"] == 7
 
+
+@pytest.mark.asyncio
+async def test_device_loop_registers_devices_before_setup_completes(instant_sleep: None) -> None:
+    client = _mock_client(node_id=1)
+    client.node_tracker.registry = {
+        42: _heartbeat_entry(),
+        43: _heartbeat_entry(),
+    }
+
+    setup_started: list[int] = []
+    setup_release = asyncio.Event()
+
+    async def _setup_device(state: DeviceWatchState) -> None:
+        setup_started.append(state.node_id)
+        await setup_release.wait()
+
+    watcher = BusPublicationWatcher(client)
+    watcher._setup_device = _setup_device  # type: ignore[method-assign]
+
+    await _run_device_loop_once(watcher)
+
+    assert 42 in watcher.devices
+    assert 43 in watcher.devices
+    assert watcher.devices[42].device_info["node_id"] == 42
+    assert watcher.devices[43].device_info["node_id"] == 43
+    await _REAL_ASYNCIO_SLEEP(0)
+    assert sorted(setup_started) == [42, 43]
+
+    setup_release.set()
+    await _await_device_setup_tasks(watcher)
+
+
+@pytest.mark.asyncio
+async def test_device_loop_notifies_when_device_is_registered(instant_sleep: None) -> None:
+    client = _mock_client(node_id=1)
+    client.node_tracker.registry = {42: _heartbeat_entry()}
+    notify_calls = 0
+
+    async def _setup_device(state: DeviceWatchState) -> None:
+        await _REAL_ASYNCIO_SLEEP(0)
+
+    def _notify() -> None:
+        nonlocal notify_calls
+        notify_calls += 1
+
+    watcher = BusPublicationWatcher(client, on_state_changed=_notify)
+    watcher._setup_device = _setup_device  # type: ignore[method-assign]
+
+    await _run_device_loop_once(watcher)
+
+    assert notify_calls >= 1
+    assert 42 in watcher.devices
+
+    await _await_device_setup_tasks(watcher)
 
 @pytest.mark.asyncio
 async def test_stop_tears_down_watched_devices() -> None:
@@ -205,6 +267,7 @@ async def test_setup_device_uses_typed_and_unstructured_subscriptions() -> None:
         patch.object(watcher, "_ensure_unstructured_subscription", AsyncMock()) as ensure_unstructured,
     ):
         state = DeviceWatchState(node_id=42, device_info={"node_id": 42})
+        watcher.devices[42] = state
         await watcher._setup_device(state)
         for task in state.subscriber_tasks.values():
             task.cancel()
@@ -253,6 +316,7 @@ async def test_setup_device_pushes_registry_snapshot() -> None:
         patch.object(watcher, "_ensure_unstructured_subscription", AsyncMock()),
     ):
         state = DeviceWatchState(node_id=42, device_info={"node_id": 42})
+        watcher.devices[42] = state
         await watcher._setup_device(state)
         for task in state.subscriber_tasks.values():
             task.cancel()
