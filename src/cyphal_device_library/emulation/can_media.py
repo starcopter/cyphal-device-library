@@ -149,20 +149,40 @@ class SharedCANMedia(Media):
         self._closed = False
         self._handlers: list[Media.ReceivedFramesHandler] = []
         self._error_handlers: list[Media.ErrorHandler | None] = []
+        self._upstream_handler: Media.ReceivedFramesHandler | None = None
+        self._sending_via_shared = False
         if already_running:
             self._chain_existing_rx_handler()
+        self._wrap_underlying_send()
 
     def _chain_existing_rx_handler(self) -> None:
         """Fan in frames from media that was already started by another transport."""
         existing = getattr(self._media, "_rx_handler", None)
         if not callable(existing):
             return
+        self._upstream_handler = existing
 
         def chained(frames: Sequence[tuple[Timestamp, Envelope]]) -> None:
             existing(frames)
             self._dispatch_frames(frames)
 
         setattr(self._media, "_rx_handler", chained)
+
+    def _wrap_underlying_send(self) -> None:
+        """Fan out transmitted frames locally when the bus does not loop back (e.g. virtual:)."""
+        original_send = self._media.send
+
+        async def wrapped_send(frames: Iterable[Envelope], monotonic_deadline: float) -> int:
+            frame_list = list(frames)
+            count = await original_send(frame_list, monotonic_deadline)
+            if count > 0:
+                stamped = [(Timestamp.now(), envelope) for envelope in frame_list[:count]]
+                self._dispatch_frames(stamped)
+                if self._sending_via_shared and self._upstream_handler is not None:
+                    self._upstream_handler(stamped)
+            return count
+
+        setattr(self._media, "send", wrapped_send)
 
     @property
     def mtu(self) -> int:
@@ -212,7 +232,11 @@ class SharedCANMedia(Media):
 
     async def send(self, frames: Iterable[Envelope], monotonic_deadline: float) -> int:
         """Send frames to the underlying media."""
-        return await self._media.send(frames, monotonic_deadline)
+        self._sending_via_shared = True
+        try:
+            return await self._media.send(frames, monotonic_deadline)
+        finally:
+            self._sending_via_shared = False
 
     def close(self) -> None:
         """No-op so individual emulated node transports do not release the bus."""
