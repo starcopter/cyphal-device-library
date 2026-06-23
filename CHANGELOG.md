@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+* _Nothing yet._
+
+## [0.7.1] - 2026-06-23
+
 ### Fixed
 
 * `BusPublicationWatcher` no longer shuts down its shared `Client` when a watched node disappears; `Device` gained an `owns_client` flag (default `True`) so shared-client users can tear down devices without closing the bus client.
