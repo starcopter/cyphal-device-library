@@ -10,13 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+* _Nothing yet._
+
+## [0.7.1] - 2026-06-23
+
 ### Fixed
 
 * `BusPublicationWatcher` no longer shuts down its shared `Client` when a watched node disappears; `Device` gained an `owns_client` flag (default `True`) so shared-client users can tear down devices without closing the bus client.
 
 ### Added
 
-* _Nothing yet._
+* Generic, node-owned publication loop in `cyphal_device_library.emulation`: `EmulatedCyphalNode` now builds one publisher per `DeviceEmulationProfile.publication_specs()` (resolving DSDL types via `load_message_type`) and drives periodic publishing from the live `uavcan.pub.<port>.dt_ms` register.
+* `DeviceEmulationProfile.build_message(port_name, fields, emulated_node)` for profiles to construct one DSDL message per publication port; `uavcan.pub.*` register parsing helpers (`port_spec_from_registers`, `publication_port_names`, `scalar_register_value`, `string_register_value`) are exported from `cyphal_device_library.emulation`.
+
+### Changed
+
+* Replaced `DeviceEmulationProfile.start_background_tasks()` with `build_message()`; periodic publishing is handled generically by `EmulatedCyphalNode`. Device-specific emulation profiles now live in the consuming applications (e.g. the BMS profile in highdra-cli) rather than in this library.
 
 ## [0.7.0] - 2026-06-19
 

@@ -61,10 +61,15 @@ class DeviceEmulationProfile(abc.ABC):
     Required methods:
         :meth:`default_registers` — full register map including ``uavcan.pub.*``.
         :meth:`publication_specs` — ports with default message field values.
-        :meth:`start_background_tasks` — periodic publishers/subscribers.
+        :meth:`build_message` — build one DSDL message for a publication port.
 
     Optional overrides:
         :meth:`handle_execute_command` — device-specific execute-command handling.
+
+    Periodic publishing is handled generically by
+    :class:`~cyphal_device_library.emulation.node.EmulatedCyphalNode`: it creates one
+    publisher per :meth:`publication_specs` entry and calls :meth:`build_message` on
+    each cycle, so profiles only declare ports and build messages.
 
     Example::
 
@@ -81,8 +86,8 @@ class DeviceEmulationProfile(abc.ABC):
             def publication_specs(self) -> list[PublicationPortSpec]:
                 return [PublicationPortSpec("reading", "example.Reading.0.1", 100)]
 
-            def start_background_tasks(self, emulated_node, config):
-                return []  # add asyncio publisher tasks here
+            def build_message(self, port_name, fields, emulated_node):
+                return example.Reading_0_1(value=fields.get("value", 0.0))
     """
 
     device_type: str
@@ -167,16 +172,24 @@ class DeviceEmulationProfile(abc.ABC):
         return info
 
     @abc.abstractmethod
-    def start_background_tasks(
+    def build_message(
         self,
+        port_name: str,
+        fields: dict[str, Any],
         emulated_node: EmulatedCyphalNode,
-        config: EmulationNodeConfig,
-    ) -> list[Any]:
-        """Start publishers/subscribers; return asyncio tasks.
+    ) -> Any:
+        """Build one DSDL message instance for a publication port.
 
-        Tasks are cancelled automatically when :meth:`EmulatedCyphalNode.stop` runs.
-        Read live publication values from ``emulated_node.config.publications`` so
-        callers can mutate fields at runtime (e.g. change ``ibat`` during a test).
+        Called by :class:`~cyphal_device_library.emulation.node.EmulatedCyphalNode`
+        on each publication cycle. ``fields`` are the live, mutable publication
+        overrides from ``emulated_node.config.publications[port_name]`` so callers
+        can change values at runtime (e.g. ``ibat`` during a test). Read live
+        register values from ``emulated_node.node.registry`` when needed.
+
+        Args:
+            port_name: Publication port basename (matches a :class:`PublicationPortSpec`).
+            fields: Live message field overrides for this port.
+            emulated_node: The owning node, for register/state access.
         """
 
     async def handle_execute_command(

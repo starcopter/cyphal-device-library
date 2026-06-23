@@ -1,6 +1,6 @@
 [project]
 name = "cyphal-device-library"
-version = "0.7.0"
+version = "0.7.1"
 description = "Library to simplify Interaction with Cyphal Devices"
 readme = "README.md"
 authors = [

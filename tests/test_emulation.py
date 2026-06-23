@@ -3,7 +3,7 @@
 import uavcan.node
 from pycyphal.application.register import String
 
-from cyphal_device_library.emulation import DeviceEmulationProfile, EmulationNodeConfig, PublicationPortSpec
+from cyphal_device_library.emulation import DeviceEmulationProfile, PublicationPortSpec
 from cyphal_device_library.emulation.base import RegisterMap
 
 
@@ -27,8 +27,8 @@ class _ExampleProfile(DeviceEmulationProfile):
             )
         ]
 
-    def start_background_tasks(self, emulated_node, config: EmulationNodeConfig) -> list[object]:
-        return []
+    def build_message(self, port_name, fields, emulated_node):
+        return None
 
 
 def test_profile_merge_add_config() -> None:
