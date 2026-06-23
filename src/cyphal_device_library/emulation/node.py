@@ -12,12 +12,17 @@ import uavcan.node
 from pycyphal.application.register import Natural16, String
 from uavcan.node import ExecuteCommand_1_3
 
+from ..util.message_types import load_message_type
 from .base import DeviceEmulationProfile, EmulationNodeConfig
 from .local_registry import (
     apply_native_register_overrides,
     configure_can_registers,
     configure_standard_service_registers,
 )
+from .publication_spec import PublicationPortSpec
+
+# Fallback publication period when neither the register nor the spec declares one.
+_DEFAULT_PUBLICATION_DT_MS = 1000
 
 
 class EmulatedCyphalNode:
@@ -85,9 +90,9 @@ class EmulatedCyphalNode:
         return Natural16([self.node_id])
 
     def start(self) -> None:
-        """Start the node transport and profile background tasks."""
+        """Start the node transport and generic publication loops."""
         self.node.start()
-        self._background_tasks = self.profile.start_background_tasks(self, self.config)
+        self._background_tasks = self._start_publication_loops()
 
     async def stop(self) -> None:
         """Cancel background tasks and close the node."""
@@ -97,6 +102,38 @@ class EmulatedCyphalNode:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
         self._background_tasks.clear()
         self.node.close()
+
+    def _start_publication_loops(self) -> list[asyncio.Task[Any]]:
+        """Create one publisher and periodic publish task per publication port."""
+        tasks: list[asyncio.Task[Any]] = []
+        for spec in self.profile.publication_specs():
+            message_type = load_message_type(spec.type_name)
+            publisher = self.node.make_publisher(message_type, spec.port_name)
+            tasks.append(
+                asyncio.create_task(
+                    self._publication_loop(publisher, spec),
+                    name=f"emulate-{self.profile.device_type}-{self.node_id}-{spec.port_name}",
+                )
+            )
+        return tasks
+
+    async def _publication_loop(self, publisher: Any, spec: PublicationPortSpec) -> None:
+        """Publish ``spec.port_name`` on the configured interval until cancelled."""
+        try:
+            while True:
+                fields = self.config.publications.get(spec.port_name, {})
+                message = self.profile.build_message(spec.port_name, fields, self)
+                await publisher.publish(message)
+                await asyncio.sleep(self._publication_dt_ms(spec) / 1000)
+        except asyncio.CancelledError:
+            pass
+
+    def _publication_dt_ms(self, spec: PublicationPortSpec) -> int:
+        """Resolve the live publication period from the register, then the spec."""
+        register_name = f"uavcan.pub.{spec.port_name}.dt_ms"
+        if register_name in self.node.registry:
+            return int(self.node.registry[register_name])
+        return spec.dt_ms if spec.dt_ms is not None else _DEFAULT_PUBLICATION_DT_MS
 
     async def _serve_execute_command(
         self,

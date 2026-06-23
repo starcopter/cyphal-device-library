@@ -2,7 +2,7 @@
 
 import uavcan.node
 
-from cyphal_device_library.emulation import DeviceEmulationProfile, EmulationNodeConfig, PublicationPortSpec
+from cyphal_device_library.emulation import DeviceEmulationProfile, PublicationPortSpec
 from cyphal_device_library.emulation.base import RegisterMap
 
 
@@ -24,8 +24,8 @@ class _ExampleProfile(DeviceEmulationProfile):
     def publication_specs(self) -> list[PublicationPortSpec]:
         return []
 
-    def start_background_tasks(self, emulated_node, config: EmulationNodeConfig) -> list[object]:
-        return []
+    def build_message(self, port_name, fields, emulated_node):
+        return None
 
 
 def test_build_node_info_includes_identity_fields() -> None:

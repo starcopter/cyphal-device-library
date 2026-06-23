@@ -8,6 +8,12 @@ from .local_registry import (
     configure_standard_service_registers,
 )
 from .node import EmulatedCyphalNode
+from .publication_helpers import (
+    port_spec_from_registers,
+    publication_port_names,
+    scalar_register_value,
+    string_register_value,
+)
 from .publication_spec import PublicationPortSpec
 
 __all__ = [
@@ -22,4 +28,8 @@ __all__ = [
     "configure_standard_service_registers",
     "create_can_media",
     "extract_can_media",
+    "port_spec_from_registers",
+    "publication_port_names",
+    "scalar_register_value",
+    "string_register_value",
 ]

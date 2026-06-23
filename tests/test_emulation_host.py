@@ -8,7 +8,6 @@ from pycyphal.application.register import String
 from cyphal_device_library.emulation import (
     DeviceEmulationProfile,
     EmulatedCyphalNode,
-    EmulationNodeConfig,
     PublicationPortSpec,
     RegisterMap,
 )
@@ -27,8 +26,8 @@ class _ExampleProfile(DeviceEmulationProfile):
     def publication_specs(self) -> list[PublicationPortSpec]:
         return []
 
-    def start_background_tasks(self, emulated_node, config: EmulationNodeConfig) -> list[object]:
-        return []
+    def build_message(self, port_name, fields, emulated_node):
+        return None
 
 
 def test_create_multiple_nodes_on_virtual_interface() -> None:
