@@ -10,9 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+### Fixed
 
-* _Nothing yet._
+* `BusPublicationWatcher._device_loop` no longer dies silently on an unhandled exception during device reconciliation (e.g. while tearing down a node that just went dark). A failing tick is now logged and retried on the next poll instead of permanently freezing device tracking for the rest of the watch session while the watcher still reports itself as running.
+* `BusPublicationWatcher` now notifies `on_state_changed` when a node departs, not just when one appears or finishes setup, so push-based consumers see departures immediately instead of waiting for their next unrelated update.
 
 ## [0.7.1] - 2026-06-23
 

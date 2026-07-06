@@ -279,37 +279,52 @@ class BusPublicationWatcher:
     async def _device_loop(self) -> None:
         """Poll node tracker and reconcile watched devices with the current bus."""
         while not self._stop_event.is_set():
-            entries = dict(self.client.node_tracker.registry)
-            current_ids = set(entries)
-            known_ids = set(self.devices)
-
-            # New nodes: register immediately, then discover publications in parallel.
-            for node_id in current_ids - known_ids:
-                if node_id == self.client.node.id:
-                    continue
-                entry = entries[node_id]
-                device_info = self._serialize_node_entry(node_id, entry)
-                async with self._lock:
-                    self.devices[node_id] = DeviceWatchState(node_id=node_id, device_info=device_info)
-                self._notify_state_changed()
-                self._start_device_setup(node_id)
-
-            # Departed nodes: cancel in-flight setup, subscribers, and cached state.
-            for node_id in known_ids - current_ids:
-                await self._cancel_device_setup(node_id)
-                async with self._lock:
-                    state = self.devices.pop(node_id, None)
-                if state is not None:
-                    await self._teardown_device(state)
-                self.unknown_ports.pop(node_id, None)
-                self._drop_port_message_history(node_id)
-
-            # Refresh heartbeat/name metadata for nodes still online.
-            for node_id, entry in entries.items():
-                if node_id in self.devices:
-                    self.devices[node_id].device_info = self._serialize_node_entry(node_id, entry)
+            try:
+                await self._reconcile_devices_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Never let a single bad reconciliation tick (e.g. a transient
+                # error while tearing down a device that just went dark) kill
+                # the whole loop — that would silently freeze device tracking
+                # for the rest of the session even though the watcher still
+                # reports itself as running.
+                LOGGER.exception("Monitor device loop tick failed; will retry")
 
             await asyncio.sleep(0.5)
+
+    async def _reconcile_devices_once(self) -> None:
+        """Diff the node tracker registry against watched devices for one tick."""
+        entries = dict(self.client.node_tracker.registry)
+        current_ids = set(entries)
+        known_ids = set(self.devices)
+
+        # New nodes: register immediately, then discover publications in parallel.
+        for node_id in current_ids - known_ids:
+            if node_id == self.client.node.id:
+                continue
+            entry = entries[node_id]
+            device_info = self._serialize_node_entry(node_id, entry)
+            async with self._lock:
+                self.devices[node_id] = DeviceWatchState(node_id=node_id, device_info=device_info)
+            self._notify_state_changed()
+            self._start_device_setup(node_id)
+
+        # Departed nodes: cancel in-flight setup, subscribers, and cached state.
+        for node_id in known_ids - current_ids:
+            await self._cancel_device_setup(node_id)
+            async with self._lock:
+                state = self.devices.pop(node_id, None)
+            if state is not None:
+                await self._teardown_device(state)
+            self.unknown_ports.pop(node_id, None)
+            self._drop_port_message_history(node_id)
+            self._notify_state_changed()
+
+        # Refresh heartbeat/name metadata for nodes still online.
+        for node_id, entry in entries.items():
+            if node_id in self.devices:
+                self.devices[node_id].device_info = self._serialize_node_entry(node_id, entry)
 
     def _start_device_setup(self, node_id: int) -> None:
         existing = self._setup_tasks.get(node_id)
