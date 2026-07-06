@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * `BusPublicationWatcher._device_loop` no longer dies silently on an unhandled exception during device reconciliation (e.g. while tearing down a node that just went dark). A failing tick is now logged and retried on the next poll instead of permanently freezing device tracking for the rest of the watch session while the watcher still reports itself as running.
 * `BusPublicationWatcher` now notifies `on_state_changed` when a node departs, not just when one appears or finishes setup, so push-based consumers see departures immediately instead of waiting for their next unrelated update.
+* Fixed an `AttributeError: 'Heartbeat_1_0' object has no attribute 'value'` that could silently kill a device's watch tasks. `pycyphal` shares one `Subscriber` implementation per subject-ID across the whole presentation layer regardless of the requested dtype, so subscribing to the heartbeat subject as `Unstructured_1` (to log heartbeat traffic outside the publication catalog) actually returned the typed `Heartbeat_1_0` subscriber already created by `Client`'s `NodeTracker`. The heartbeat subject is now subscribed with its real type, and `_unstructured_loop` falls back to best-effort serialization instead of crashing if it ever receives an unexpectedly-typed message again.
 
 ## [0.7.1] - 2026-06-23
 
