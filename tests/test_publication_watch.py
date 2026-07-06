@@ -477,6 +477,81 @@ async def test_unstructured_loop_keeps_catalogued_port_name_without_dsdl() -> No
 
 
 @pytest.mark.asyncio
+async def test_ensure_unstructured_subscription_uses_typed_heartbeat_subscriber() -> None:
+    client = _mock_client()
+    watcher = BusPublicationWatcher(client)
+    state = DeviceWatchState(node_id=42, device_info={"node_id": 42})
+
+    await watcher._ensure_unstructured_subscription(state, HEARTBEAT_SUBJECT_ID)
+
+    client.node.make_subscriber.assert_called_once_with(uavcan.node.Heartbeat_1_0, HEARTBEAT_SUBJECT_ID)
+    task = state.unstructured_tasks[HEARTBEAT_SUBJECT_ID]
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_loop_records_typed_heartbeat_message() -> None:
+    client = _mock_client()
+    watcher = BusPublicationWatcher(client)
+    state = DeviceWatchState(node_id=42, device_info={"node_id": 42})
+    subscriber = MagicMock()
+    metadata = SimpleNamespace(source_node_id=42, transfer_id=5)
+    heartbeat = uavcan.node.Heartbeat_1_0(
+        uptime=10,
+        health=uavcan.node.Health_1_0(0),
+        mode=uavcan.node.Mode_1_0(0),
+        vendor_specific_status_code=1,
+    )
+
+    async def _subscription() -> object:
+        yield heartbeat, metadata
+        watcher._stop_event.set()
+
+    subscriber.__aiter__ = lambda self: _subscription()
+    await watcher._heartbeat_loop(state, subscriber)
+
+    assert len(watcher.message_buffer) == 1
+    parsed = watcher.message_buffer[0]
+    assert parsed.subject_id == HEARTBEAT_SUBJECT_ID
+    assert parsed.type_name == "uavcan.node.Heartbeat.1.0"
+    assert parsed.parse_status == "ok"
+
+
+@pytest.mark.asyncio
+async def test_unstructured_loop_handles_unexpected_typed_message_without_crashing() -> None:
+    """Regression test: pycyphal shares one Subscriber impl per subject-ID regardless of
+    the requested dtype, so `_unstructured_loop` may receive an already-typed message (as
+    happened for HEARTBEAT_SUBJECT_ID before `_heartbeat_loop` existed) instead of
+    `Unstructured_1`. It must serialize defensively rather than crash on `message.value`.
+    """
+    client = _mock_client()
+    watcher = BusPublicationWatcher(client)
+    state = DeviceWatchState(node_id=42, device_info={"node_id": 42})
+    subscriber = MagicMock()
+    metadata = SimpleNamespace(source_node_id=42, transfer_id=1)
+    heartbeat = uavcan.node.Heartbeat_1_0(
+        uptime=1,
+        health=uavcan.node.Health_1_0(0),
+        mode=uavcan.node.Mode_1_0(0),
+        vendor_specific_status_code=0,
+    )
+
+    async def _subscription() -> object:
+        yield heartbeat, metadata
+        watcher._stop_event.set()
+
+    subscriber.__aiter__ = lambda self: _subscription()
+    await watcher._unstructured_loop(state, HEARTBEAT_SUBJECT_ID, subscriber)
+
+    assert len(watcher.message_buffer) == 1
+    parsed = watcher.message_buffer[0]
+    assert parsed.parse_status == "ok"
+    assert parsed.type_name == "Heartbeat_1_0"
+
+
+@pytest.mark.asyncio
 async def test_record_message_updates_stats_and_pending_queue() -> None:
     client = _mock_client()
     watcher = BusPublicationWatcher(client, max_messages=2)
