@@ -769,7 +769,8 @@ async def discover_device_node_id(
             raise TimeoutError(f"Failed to discover a device with {', '.join(attrs)} within {timeout} seconds") from ex
 
         finally:
-            client.node_tracker.remove_update_handler(_discover)
+            with contextlib.suppress(ValueError):
+                client.node_tracker.remove_update_handler(_discover)
 
     entry = client.node_tracker.registry[dut_node_id]
     assert entry.info is not None
