@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-* _Nothing yet._
+* udp_multicast added as CAN transport interface
 
 ## [0.7.2] - 2026-07-06
 
