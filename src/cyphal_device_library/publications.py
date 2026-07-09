@@ -15,8 +15,11 @@ PUB_REGISTER_RE = re.compile(r"^uavcan\.pub\.(?P<port_name>[^.]+)\.(?P<field>id|
 
 
 class _PublicationRegisterSource(Protocol):
-    name: str
-    value: NativeValue
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def value(self) -> NativeValue: ...
 
 
 class _PublicationRegistrySource(Protocol):

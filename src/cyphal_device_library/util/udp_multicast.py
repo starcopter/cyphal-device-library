@@ -15,6 +15,8 @@ from __future__ import annotations
 
 def register_udp_multicast_constructor() -> None:
     """Idempotently add ``udp_multicast`` support to pycyphal's PythonCAN media."""
+    from typing import Any
+
     import can
     from pycyphal.transport.can.media.pythoncan import _pythoncan as pythoncan_media
 
@@ -25,7 +27,7 @@ def register_udp_multicast_constructor() -> None:
         parameters: pythoncan_media._InterfaceParameters,
     ) -> tuple[pythoncan_media.PythonCANBusOptions, can.ThreadSafeBus]:
         multicast_ip, _, port_text = parameters.channel_name.partition(":")
-        kwargs: dict[str, object] = {
+        kwargs: dict[str, Any] = {
             "interface": "udp_multicast",
             "channel": multicast_ip,
             "fd": isinstance(parameters, pythoncan_media._FDInterfaceParameters),
