@@ -121,6 +121,10 @@ def make_can_transport(iface: str, bitrate: int | list[int], node_id: int) -> "C
     from pycyphal.application.register import Natural16, Natural32, ValueProxy
     from pycyphal.transport.can import CANTransport
 
+    from cyphal_device_library.util.udp_multicast import register_udp_multicast_constructor
+
+    register_udp_multicast_constructor()
+
     bitrate_list: list[int]
     if isinstance(bitrate, int) or (len(bitrate) == 2 and bitrate[0] == bitrate[1]):
         # classic CAN
