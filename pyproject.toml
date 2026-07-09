@@ -37,9 +37,10 @@ dev = [
 
 [tool.uv.sources]
 # DEV
-python-can-usbtingo = { path = "../python-can-usbtingo", editable = true }
+# python-can-usbtingo = { path = "../python-can-usbtingo", editable = true }
 # PROD
-#python-can-usbtingo = { git = "https://github.com/Finwood/python-can-usbtingo", branch = "develop" }
+# python-can-usbtingo = { git = "https://github.com/Finwood/python-can-usbtingo", branch = "develop" }
+python-can-usbtingo = { git = "https://github.com/starcopter/python-can-usbtingo", branch = "develop" }
 
 [build-system]
 requires = ["hatchling"]
