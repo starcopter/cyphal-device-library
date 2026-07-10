@@ -12,6 +12,8 @@ dependencies = [
     "python-can-usbtingo",
     "python-dotenv>=1.1.0",
     "python-can[pcan]",
+    "python-can[multicast]",
+    "python-can-remote",
     "rich>=13.0.0",
     "typer>=0.16.0",
     "questionary",
