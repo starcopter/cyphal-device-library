@@ -18,7 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-* _Nothing yet._
+* python-can-remote added as CAN transport interface
+* dependecies include python-can-remote and python-can[multicast] now
 
 ## [0.7.3] - 2026-07-09
 
