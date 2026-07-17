@@ -13,6 +13,7 @@ import uavcan.primitive
 from pycyphal.application.node_tracker import Entry
 
 from cyphal_device_library.publication_watch import (
+    CATALOG_DISCOVERY_STAGGER_S,
     HEARTBEAT_SUBJECT_ID,
     BusPublicationWatcher,
     DeviceWatchState,
@@ -56,8 +57,10 @@ async def _run_device_loop_once(watcher: BusPublicationWatcher) -> None:
     """Run one reconciliation pass then stop the watcher."""
 
     async def _sleep_and_stop(_duration: float) -> None:
-        watcher._stop_event.set()
+        # Yield first so background tasks started during reconcile (e.g. catalog
+        # discovery) can run before the loop is marked stopped.
         await _REAL_ASYNCIO_SLEEP(0)
+        watcher._stop_event.set()
 
     with patch("cyphal_device_library.publication_watch.asyncio.sleep", _sleep_and_stop):
         await watcher._device_loop()
@@ -66,6 +69,13 @@ async def _run_device_loop_once(watcher: BusPublicationWatcher) -> None:
 async def _await_device_setup_tasks(watcher: BusPublicationWatcher) -> None:
     """Wait for any in-flight per-device setup tasks."""
     tasks = list(watcher._setup_tasks.values())
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def _await_catalog_tasks(watcher: BusPublicationWatcher) -> None:
+    """Wait for any in-flight catalog discovery tasks."""
+    tasks = list(watcher._catalog_tasks.values())
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -90,15 +100,50 @@ async def test_start_and_stop_lifecycle(instant_sleep: None) -> None:
 
 
 @pytest.mark.asyncio
-async def test_reconcile_does_not_auto_setup_publications(instant_sleep: None) -> None:
+async def test_reconcile_starts_catalog_discovery_without_subscribers(instant_sleep: None) -> None:
     client = _mock_client()
     client.node_tracker.registry = {42: _heartbeat_entry()}
     watcher = BusPublicationWatcher(client)
-    with patch.object(watcher, "_setup_device", new_callable=AsyncMock) as setup:
+    discover = AsyncMock()
+
+    async def _discover(state: DeviceWatchState) -> None:
+        await discover(state)
+        state.publications["status"] = PublicationPort(
+            port_name="status",
+            subject_id=6060,
+            type_name="uavcan.primitive.Empty.1.0",
+            message_type=None,
+            parse_status="missing_dsdl",
+        )
+        state.registry_entries = [{"name": "uavcan.pub.status.id", "value": [6060]}]
+
+    with patch.object(watcher, "_discover_device_catalog", side_effect=_discover):
         await _run_device_loop_once(watcher)
-        setup.assert_not_called()
+        await _await_catalog_tasks(watcher)
+
+    discover.assert_awaited()
     assert 42 in watcher.devices
     assert watcher.devices[42].subscriber_tasks == {}
+    assert "status" in watcher.devices[42].publications
+
+
+@pytest.mark.asyncio
+async def test_reconcile_schedules_staggered_catalog_tasks(instant_sleep: None) -> None:
+    client = _mock_client(node_id=1)
+    client.node_tracker.registry = {42: _heartbeat_entry(), 43: _heartbeat_entry()}
+    watcher = BusPublicationWatcher(client)
+    delays: list[float] = []
+
+    def _start(node_id: int, *, stagger_index: int = 0) -> None:
+        delays.append(stagger_index * CATALOG_DISCOVERY_STAGGER_S)
+        # still create a no-op completed catalog fill so reconcile finishes cleanly
+        state = watcher.devices[node_id]
+        state.registry_entries = [{"name": "x"}]
+
+    with patch.object(watcher, "_start_catalog_discovery", side_effect=_start):
+        await _run_device_loop_once(watcher)
+
+    assert delays == [0.0, CATALOG_DISCOVERY_STAGGER_S]
 
 
 @pytest.mark.asyncio

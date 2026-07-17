@@ -122,16 +122,16 @@ class BusPublicationWatcher:
     """Watch Cyphal publications from multiple devices using one :class:`~cyphal_device_library.client.Client`.
 
     The watcher polls :attr:`Client.node_tracker` for online nodes and registers each
-    new remote node for **presence only** (heartbeat/name metadata in
-    :attr:`devices`). Publication discovery and subscriptions start only after an
-    explicit :meth:`focus` call. :meth:`unfocus` tears down subscribers and clears
-    live observation state (port stats, unknown ports, message history) while keeping
-    the publication catalog and registry entries. The presence row remains in
-    :attr:`devices`.
+    new remote node for **presence** (heartbeat/name metadata in :attr:`devices`) and
+    starts **background catalog discovery** (publication ports and registry entries).
+    Subscriptions start only after an explicit :meth:`focus` call. :meth:`unfocus`
+    tears down subscribers and clears live observation state (port stats, unknown
+    ports, message history) while keeping the publication catalog and registry
+    entries. The presence row remains in :attr:`devices`.
 
     For a focused node, setup:
 
-    1. Discovers ``uavcan.pub.<port_name>.{id,type,dt_ms}`` registers.
+    1. Ensures the publication catalog is warm (awaits in-flight discovery if needed).
     2. Subscribes to each catalogued port via ``node.make_subscriber`` when the
        DSDL type is available locally, or via an unstructured subscriber otherwise.
     3. Subscribes to :data:`uavcan.node.Heartbeat_1_0` on the fixed subject ID so
@@ -228,6 +228,10 @@ class BusPublicationWatcher:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self._setup_tasks.clear()
+
+        for node_id in list(self._catalog_tasks):
+            await self._cancel_catalog_discovery(node_id)
+
         self._focused_node_ids.clear()
 
         async with self._lock:
@@ -341,8 +345,11 @@ class BusPublicationWatcher:
         current_ids = set(entries)
         known_ids = set(self.devices)
 
-        # New nodes: register presence only; call focus() to start publication setup.
-        for node_id in current_ids - known_ids:
+        # New nodes: register presence and start staggered catalog discovery.
+        # Call focus() to start subscribers.
+        new_nodes = sorted(current_ids - known_ids)
+        stagger_i = 0
+        for node_id in new_nodes:
             if node_id == self.client.node.id:
                 continue
             entry = entries[node_id]
@@ -351,11 +358,14 @@ class BusPublicationWatcher:
                 self.devices[node_id] = DeviceWatchState(node_id=node_id, device_info=device_info)
             self.last_bus_activity_unix = time.time()
             self._notify_state_changed()
+            self._start_catalog_discovery(node_id, stagger_index=stagger_i)
+            stagger_i += 1
 
-        # Departed nodes: cancel in-flight setup, subscribers, and cached state.
+        # Departed nodes: cancel in-flight setup/catalog, subscribers, and cached state.
         for node_id in known_ids - current_ids:
             self._focused_node_ids.discard(node_id)
             await self._cancel_device_setup(node_id)
+            await self._cancel_catalog_discovery(node_id)
             async with self._lock:
                 state = self.devices.pop(node_id, None)
             if state is not None:
@@ -441,6 +451,42 @@ class BusPublicationWatcher:
 
     def _catalog_is_warm(self, state: DeviceWatchState) -> bool:
         return bool(state.publications) or bool(state.registry_entries)
+
+    def _start_catalog_discovery(self, node_id: int, *, stagger_index: int = 0) -> None:
+        existing = self._catalog_tasks.get(node_id)
+        if existing is not None and not existing.done():
+            return
+        stagger_s = stagger_index * CATALOG_DISCOVERY_STAGGER_S
+        task = asyncio.create_task(
+            self._catalog_discovery_task(node_id, stagger_s),
+            name=f"pubwatch-catalog-{node_id}",
+        )
+        self._catalog_tasks[node_id] = task
+
+    async def _catalog_discovery_task(self, node_id: int, stagger_s: float) -> None:
+        try:
+            if stagger_s > 0:
+                await asyncio.sleep(stagger_s)
+            if self._stop_event.is_set():
+                return
+            state = self.devices.get(node_id)
+            if state is None or self._catalog_is_warm(state):
+                return
+            await self._discover_device_catalog(state)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOGGER.warning("Catalog discovery failed for node %s", node_id, exc_info=True)
+        finally:
+            self._catalog_tasks.pop(node_id, None)
+
+    async def _cancel_catalog_discovery(self, node_id: int) -> None:
+        task = self._catalog_tasks.pop(node_id, None)
+        if task is None:
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
     async def _discover_device_catalog(self, state: DeviceWatchState) -> None:
         # List uavcan.pub.* registers and build the publication catalog.
