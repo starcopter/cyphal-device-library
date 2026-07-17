@@ -624,6 +624,72 @@ async def test_record_message_updates_stats_and_pending_queue() -> None:
     assert state.port_stats[6060].count == 3
 
 
+def test_build_status_payload_defaults_omit_registry_and_history() -> None:
+    client = _mock_client()
+    watcher = BusPublicationWatcher(client)
+    state = DeviceWatchState(node_id=7, device_info={"node_id": 7, "name": "x"})
+    state.registry_entries = [{"name": "uavcan.node.id", "dtype": "natural8", "value": 7}]
+    state.publications = {
+        "bms_data": PublicationPort(
+            port_name="bms_data",
+            subject_id=100,
+            type_name="x",
+            dt_ms=None,
+            parse_status="ok",
+            message_type=None,
+        )
+    }
+    watcher.devices[7] = state
+    watcher._pending_messages.append(
+        ParsedMessage(
+            node_id=7,
+            port_name="bms_data",
+            subject_id=100,
+            type_name="x",
+            timestamp_unix=1.0,
+            transfer_id=1,
+            fields={"a": 1},
+            sequence=1,
+        )
+    )
+
+    payload = watcher.build_status_payload()
+
+    assert "registry" not in payload["devices"][0]
+    assert "message_history" not in payload
+    assert len(payload["messages"]) == 1
+
+
+def test_build_focus_status_payload_includes_registry_and_node_history() -> None:
+    client = _mock_client()
+    watcher = BusPublicationWatcher(client, max_messages_per_port=3)
+    state = DeviceWatchState(node_id=7, device_info={"node_id": 7, "name": "x"})
+    state.registry_entries = [{"name": "uavcan.node.id", "dtype": "natural8", "value": 7}]
+    watcher.devices[7] = state
+    other = DeviceWatchState(node_id=8, device_info={"node_id": 8, "name": "y"})
+    watcher.devices[8] = other
+
+    for index, node_id in enumerate((7, 7, 8)):
+        asyncio.run(
+            watcher._record_message(
+                state=state if node_id == 7 else other,
+                port_name="temp_data",
+                subject_id=6061,
+                type_name="test.Type.1.0",
+                fields={"index": index},
+                transfer_id=index,
+                parse_status="ok",
+            )
+        )
+
+    payload = watcher.build_focus_status_payload(7)
+
+    assert payload["devices"][0]["registry"] == state.registry_entries
+    assert "message_history" in payload
+    assert all(item["node_id"] == 7 for item in payload["message_history"])
+    assert len(payload["messages"]) == 3
+
+
 def test_drain_pending_messages_and_build_status_payload() -> None:
     client = _mock_client()
     watcher = BusPublicationWatcher(client)
@@ -661,7 +727,7 @@ def test_drain_pending_messages_and_build_status_payload() -> None:
     assert payload["devices"][0]["node_id"] == 42
     assert payload["devices"][0]["publications"][0]["port_name"] == "status"
     assert payload["messages"][0]["port_name"] == "status"
-    assert payload["message_history"] == []
+    assert "message_history" not in payload
     assert payload["unknown_ports"][0]["node_id"] == 99
     assert payload["unknown_ports"][0]["subject_id"] == 8080
     assert payload["port_stats"][0]["count"] == 2
@@ -691,7 +757,7 @@ def test_build_status_payload_includes_per_subject_message_history() -> None:
             )
         )
 
-    payload = watcher.build_status_payload()
+    payload = watcher.build_status_payload(include_message_history=True)
     history = payload["message_history"]
     assert len(history) == 3
     assert [item["fields"]["index"] for item in history] == [1, 2, 3]

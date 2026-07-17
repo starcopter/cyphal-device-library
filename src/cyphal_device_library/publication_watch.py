@@ -254,17 +254,23 @@ class BusPublicationWatcher:
         del self._pending_messages[:limit]
         return batch
 
-    def build_status_payload(self, *, message_limit: int | None = None) -> dict[str, Any]:
+    def build_status_payload(
+        self,
+        *,
+        message_limit: int | None = DEFAULT_NOTIFY_BATCH,
+        include_registry: bool = False,
+        include_message_history: bool = False,
+    ) -> dict[str, Any]:
         """Build a status snapshot."""
         devices_payload = []
         for state in sorted(self.devices.values(), key=lambda item: item.node_id):
-            devices_payload.append(
-                {
-                    **state.device_info,
-                    "publications": [port.to_dict() for port in state.publications.values()],
-                    "registry": state.registry_entries,
-                }
-            )
+            entry: dict[str, Any] = {
+                **state.device_info,
+                "publications": [port.to_dict() for port in state.publications.values()],
+            }
+            if include_registry:
+                entry["registry"] = state.registry_entries
+            devices_payload.append(entry)
 
         unknown_payload = []
         for node_id, ports in sorted(self.unknown_ports.items()):
@@ -279,14 +285,28 @@ class BusPublicationWatcher:
                     stats.to_dict(node_id=state.node_id, port_name=port_name, subject_id=subject_id)
                 )
 
-        return {
+        result: dict[str, Any] = {
             "devices": devices_payload,
             "messages": [message.to_dict() for message in self.drain_pending_messages(limit=message_limit)],
-            "message_history": self.build_message_history_payload(),
             "unknown_ports": unknown_payload,
             "port_stats": port_stats_payload,
             "updated_at_unix": time.time(),
         }
+        if include_message_history:
+            result["message_history"] = self.build_message_history_payload()
+        return result
+
+    def build_focus_status_payload(self, node_id: int) -> dict[str, Any]:
+        """Build a full status snapshot for one focused node."""
+        payload = self.build_status_payload(
+            include_registry=True,
+            include_message_history=True,
+            message_limit=None,
+        )
+        payload["message_history"] = [
+            item for item in payload.get("message_history", []) if item.get("node_id") == node_id
+        ]
+        return payload
 
     async def _device_loop(self) -> None:
         """Poll node tracker and reconcile watched devices with the current bus."""
