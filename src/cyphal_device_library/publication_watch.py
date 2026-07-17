@@ -1,4 +1,4 @@
-"""Bus-wide publication watching using Client and Device."""
+"""Bus-wide publication watching using Client and Registry discovery."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ import uavcan.node
 import uavcan.primitive
 
 from .client import Client
-from .device import Device
 from .publications import PublicationPort, discover_publication_ports_remote
 from .registry import Registry, registry_to_json_entries
 from .util.message_serialize import ensure_json_serializable, serialize_message
@@ -31,6 +30,7 @@ MAX_SUBJECT_ID = 8191
 DEFAULT_MAX_MESSAGES = 200
 DEFAULT_MAX_MESSAGES_PER_PORT = 50
 DEFAULT_NOTIFY_BATCH = 30
+CATALOG_DISCOVERY_STAGGER_S = 0.1
 
 
 def is_subscribable_subject_id(subject_id: int) -> bool:
@@ -107,7 +107,6 @@ class DeviceWatchState:
 
     node_id: int
     device_info: dict[str, Any]
-    device: Device | None = None
     publications: dict[str, PublicationPort] = field(default_factory=dict)
     subscriber_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
     unstructured_tasks: dict[int, asyncio.Task[None]] = field(default_factory=dict)
@@ -115,25 +114,27 @@ class DeviceWatchState:
     known_subject_ids: set[int] = field(default_factory=set)
     registry_entries: list[dict[str, Any]] = field(default_factory=list)
     setup_task: asyncio.Task[None] | None = None
+    # Keep open typed subscribers so they are closed on teardown.
+    typed_subscribers: dict[str, pycyphal.presentation.Subscriber[Any]] = field(default_factory=dict)
 
 
 class BusPublicationWatcher:
     """Watch Cyphal publications from multiple devices using one :class:`~cyphal_device_library.client.Client`.
 
     The watcher polls :attr:`Client.node_tracker` for online nodes and registers each
-    new remote node for **presence only** (heartbeat/name metadata in
-    :attr:`devices`). Publication discovery and subscriptions start only after an
-    explicit :meth:`focus` call. :meth:`unfocus` tears down subscribers and clears
-    publication-derived state while keeping the presence row.
+    new remote node for **presence** (heartbeat/name metadata in :attr:`devices`) and
+    starts **background catalog discovery** (publication ports and registry entries).
+    Subscriptions start only after an explicit :meth:`focus` call. :meth:`unfocus`
+    tears down subscribers and clears live observation state (port stats, unknown
+    ports, message history) while keeping the publication catalog and registry
+    entries. The presence row remains in :attr:`devices`.
 
     For a focused node, setup:
 
-    1. Discovers ``uavcan.pub.<port_name>.{id,type,dt_ms}`` registers.
-    2. Creates a :class:`~cyphal_device_library.device.Device` with the publication
-       registers pre-fetched.
-    3. Subscribes to each catalogued port via :meth:`Device.get_subscription` when the
+    1. Ensures the publication catalog is warm (awaits in-flight discovery if needed).
+    2. Subscribes to each catalogued port via ``node.make_subscriber`` when the
        DSDL type is available locally, or via an unstructured subscriber otherwise.
-    4. Subscribes to :data:`uavcan.node.Heartbeat_1_0` on the fixed subject ID so
+    3. Subscribes to :data:`uavcan.node.Heartbeat_1_0` on the fixed subject ID so
        heartbeat traffic on non-catalogued ports can be observed.
 
     Received messages are stored in :attr:`message_buffer` and queued in an internal
@@ -189,6 +190,7 @@ class BusPublicationWatcher:
         self._device_loop_task: asyncio.Task[None] | None = None
         self._promiscuous_task: asyncio.Task[None] | None = None
         self._setup_tasks: dict[int, asyncio.Task[None]] = {}
+        self._catalog_tasks: dict[int, asyncio.Task[None]] = {}
         self._focused_node_ids: set[int] = set()
         self.last_bus_activity_unix: float = 0.0
         self._lock = asyncio.Lock()
@@ -226,6 +228,10 @@ class BusPublicationWatcher:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self._setup_tasks.clear()
+
+        for node_id in list(self._catalog_tasks):
+            await self._cancel_catalog_discovery(node_id)
+
         self._focused_node_ids.clear()
 
         async with self._lock:
@@ -339,8 +345,11 @@ class BusPublicationWatcher:
         current_ids = set(entries)
         known_ids = set(self.devices)
 
-        # New nodes: register presence only; call focus() to start publication setup.
-        for node_id in current_ids - known_ids:
+        # New nodes: register presence and start staggered catalog discovery.
+        # Call focus() to start subscribers.
+        new_nodes = sorted(current_ids - known_ids)
+        stagger_i = 0
+        for node_id in new_nodes:
             if node_id == self.client.node.id:
                 continue
             entry = entries[node_id]
@@ -349,11 +358,14 @@ class BusPublicationWatcher:
                 self.devices[node_id] = DeviceWatchState(node_id=node_id, device_info=device_info)
             self.last_bus_activity_unix = time.time()
             self._notify_state_changed()
+            self._start_catalog_discovery(node_id, stagger_index=stagger_i)
+            stagger_i += 1
 
-        # Departed nodes: cancel in-flight setup, subscribers, and cached state.
+        # Departed nodes: cancel in-flight setup/catalog, subscribers, and cached state.
         for node_id in known_ids - current_ids:
             self._focused_node_ids.discard(node_id)
             await self._cancel_device_setup(node_id)
+            await self._cancel_catalog_discovery(node_id)
             async with self._lock:
                 state = self.devices.pop(node_id, None)
             if state is not None:
@@ -390,11 +402,8 @@ class BusPublicationWatcher:
         if state is None:
             return
         await self._teardown_device(state)
-        # Keep presence row; clear publication-derived fields
-        state.publications.clear()
-        state.registry_entries = []
+        # Keep catalog/registry across unfocus; clear live observation only.
         state.port_stats.clear()
-        state.known_subject_ids.clear()
         self.unknown_ports.pop(node_id, None)
         self._drop_port_message_history(node_id)
         self._notify_state_changed()
@@ -440,41 +449,73 @@ class BusPublicationWatcher:
     def _device_still_active(self, state: DeviceWatchState) -> bool:
         return self.devices.get(state.node_id) is state
 
-    async def _setup_device(self, state: DeviceWatchState) -> None:
+    def _catalog_is_warm(self, state: DeviceWatchState) -> bool:
+        return bool(state.publications) or bool(state.registry_entries)
+
+    def _start_catalog_discovery(self, node_id: int, *, stagger_index: int = 0) -> None:
+        existing = self._catalog_tasks.get(node_id)
+        if existing is not None and not existing.done():
+            return
+        stagger_s = stagger_index * CATALOG_DISCOVERY_STAGGER_S
+        task = asyncio.create_task(
+            self._catalog_discovery_task(node_id, stagger_s),
+            name=f"pubwatch-catalog-{node_id}",
+        )
+        self._catalog_tasks[node_id] = task
+
+    async def _catalog_discovery_task(self, node_id: int, stagger_s: float) -> None:
+        try:
+            if stagger_s > 0:
+                await asyncio.sleep(stagger_s)
+            if self._stop_event.is_set():
+                return
+            state = self.devices.get(node_id)
+            if state is None or self._catalog_is_warm(state):
+                return
+            await self._discover_device_catalog(state)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOGGER.warning("Catalog discovery failed for node %s", node_id, exc_info=True)
+        finally:
+            self._catalog_tasks.pop(node_id, None)
+
+    async def _cancel_catalog_discovery(self, node_id: int) -> None:
+        task = self._catalog_tasks.pop(node_id, None)
+        if task is None:
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    async def _discover_device_catalog(self, state: DeviceWatchState) -> None:
         # List uavcan.pub.* registers and build the publication catalog.
+        # Do not construct a Device here: Device.__init__ re-fetches every
+        # publication register in an all-or-nothing TaskGroup. On busy nodes
+        # (e.g. motherboard at node-ID 0 with many pubs) a single refresh
+        # failure aborts init, errors are swallowed, and subscribers never
+        # start — while the catalog from this discovery still reaches the UI.
         registry = Registry(state.node_id, self.client.node.make_client)
         publications = await discover_publication_ports_remote(registry)
         if not self._device_still_active(state):
             return
         state.registry_entries = registry_to_json_entries(registry)
-        self._notify_state_changed()
         state.publications = {port.port_name: port for port in publications}
         state.known_subject_ids = {port.subject_id for port in publications}
+        self._notify_state_changed()
 
-        # Pre-fetch only publication-related registers on the Device.
-        register_names: list[str] = []
-        for port in publications:
-            register_names.extend(
-                [
-                    f"uavcan.pub.{port.port_name}.id",
-                    f"uavcan.pub.{port.port_name}.type",
-                ]
-            )
-            if port.dt_ms is not None:
-                register_names.append(f"uavcan.pub.{port.port_name}.dt_ms")
-
-        device = Device(
-            self.client,
-            state.node_id,
-            discover_registers=register_names or False,
-            owns_client=False,
-        )
-        await device.wait_for_initialization(timeout=10.0)
-        if not self._device_still_active(state):
-            device.close()
+    async def _ensure_catalog(self, state: DeviceWatchState) -> None:
+        if self._catalog_is_warm(state):
             return
-        state.device = device
+        catalog_task = self._catalog_tasks.get(state.node_id)
+        if catalog_task is not None and not catalog_task.done():
+            await catalog_task
+            if self._catalog_is_warm(state):
+                return
+        await self._discover_device_catalog(state)
 
+    async def _start_device_subscribers(self, state: DeviceWatchState) -> None:
+        publications = list(state.publications.values())
         subscribed_subjects: set[int] = set()
         typed_by_subject: dict[int, PublicationPort] = {}
         for port in publications:
@@ -508,6 +549,14 @@ class BusPublicationWatcher:
         if HEARTBEAT_SUBJECT_ID not in subscribed_subjects:
             await self._ensure_unstructured_subscription(state, HEARTBEAT_SUBJECT_ID)
 
+    async def _setup_device(self, state: DeviceWatchState) -> None:
+        await self._ensure_catalog(state)
+        if not self._device_still_active(state):
+            return
+        if state.node_id not in self._focused_node_ids:
+            return
+        await self._start_device_subscribers(state)
+
     async def _teardown_device(self, state: DeviceWatchState) -> None:
         if state.setup_task is not None and not state.setup_task.done():
             state.setup_task.cancel()
@@ -528,32 +577,59 @@ class BusPublicationWatcher:
                 await task
         state.unstructured_tasks.clear()
 
-        if state.device is not None:
-            state.device.close()
-            state.device = None
+        for subscriber in list(state.typed_subscribers.values()):
+            with contextlib.suppress(Exception):
+                subscriber.close()
+        state.typed_subscribers.clear()
 
     async def _subscriber_loop(self, state: DeviceWatchState, port: PublicationPort) -> None:
-        assert state.device is not None
         assert port.message_type is not None
         if not is_subscribable_subject_id(port.subject_id):
             return
 
-        subscriber = state.device.get_subscription(port.port_name)
-        async for message, metadata in subscriber:
-            if self._stop_event.is_set():
-                return
-            # Ignore transfers relayed from other nodes on the same subject ID.
-            if metadata.source_node_id != state.node_id:
-                continue
-            await self._record_message(
-                state=state,
-                port_name=port.port_name,
-                subject_id=port.subject_id,
-                type_name=port.type_name,
-                fields=serialize_message(message),
-                transfer_id=getattr(metadata, "transfer_id", None),
-                parse_status="ok",
+        try:
+            subscriber = self.client.node.make_subscriber(port.message_type, port.subject_id)
+        except Exception:
+            LOGGER.warning(
+                "Failed to subscribe to node %s port %s (subject %s)",
+                state.node_id,
+                port.port_name,
+                port.subject_id,
+                exc_info=True,
             )
+            return
+
+        state.typed_subscribers[port.port_name] = subscriber
+        try:
+            async for message, metadata in subscriber:
+                if self._stop_event.is_set():
+                    return
+                # Ignore transfers relayed from other nodes on the same subject ID.
+                # Use `is not None` so node-ID 0 is not treated as missing.
+                if metadata.source_node_id is None or metadata.source_node_id != state.node_id:
+                    continue
+                await self._record_message(
+                    state=state,
+                    port_name=port.port_name,
+                    subject_id=port.subject_id,
+                    type_name=port.type_name,
+                    fields=serialize_message(message),
+                    transfer_id=getattr(metadata, "transfer_id", None),
+                    parse_status="ok",
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOGGER.warning(
+                "Subscriber loop failed for node %s port %s",
+                state.node_id,
+                port.port_name,
+                exc_info=True,
+            )
+        finally:
+            with contextlib.suppress(Exception):
+                subscriber.close()
+            state.typed_subscribers.pop(port.port_name, None)
 
     async def _ensure_unstructured_subscription(self, state: DeviceWatchState, subject_id: int) -> None:
         if subject_id in state.unstructured_tasks:
@@ -591,7 +667,7 @@ class BusPublicationWatcher:
         async for message, metadata in subscriber:
             if self._stop_event.is_set():
                 return
-            if metadata.source_node_id != state.node_id:
+            if metadata.source_node_id is None or metadata.source_node_id != state.node_id:
                 continue
 
             await self._record_message(
@@ -613,7 +689,7 @@ class BusPublicationWatcher:
         async for message, metadata in subscriber:
             if self._stop_event.is_set():
                 return
-            if metadata.source_node_id != state.node_id:
+            if metadata.source_node_id is None or metadata.source_node_id != state.node_id:
                 continue
 
             port_name = self._resolve_port_name(state, subject_id)
