@@ -227,7 +227,7 @@ wheels = [
 
 [[package]]
 name = "cyphal-device-library"
-version = "0.7.5"
+version = "0.7.6"
 source = { editable = "." }
 dependencies = [
     { name = "pycyphal", extra = ["transport-can-pythoncan"] },
