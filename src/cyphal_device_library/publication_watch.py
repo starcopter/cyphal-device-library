@@ -25,9 +25,17 @@ LOGGER = logging.getLogger(__name__)
 
 HEARTBEAT_SUBJECT_ID = uavcan.node.Heartbeat_1_0._FIXED_PORT_ID_
 
+# Valid Cyphal message subject IDs are 0..8191 (13-bit). Unset port registers use 65535.
+MAX_SUBJECT_ID = 8191
+
 DEFAULT_MAX_MESSAGES = 200
 DEFAULT_MAX_MESSAGES_PER_PORT = 50
 DEFAULT_NOTIFY_BATCH = 30
+
+
+def is_subscribable_subject_id(subject_id: int) -> bool:
+    """Return True when *subject_id* is a configured Cyphal message subject ID."""
+    return 0 <= int(subject_id) <= MAX_SUBJECT_ID
 
 
 @dataclass
@@ -470,6 +478,8 @@ class BusPublicationWatcher:
         subscribed_subjects: set[int] = set()
         typed_by_subject: dict[int, PublicationPort] = {}
         for port in publications:
+            if not is_subscribable_subject_id(port.subject_id):
+                continue
             if port.parse_status != "ok" or port.message_type is None:
                 continue
             existing = typed_by_subject.get(port.subject_id)
@@ -487,6 +497,8 @@ class BusPublicationWatcher:
             state.subscriber_tasks[port.port_name] = task
 
         for port in publications:
+            if not is_subscribable_subject_id(port.subject_id):
+                continue
             if port.subject_id in subscribed_subjects:
                 continue
             await self._ensure_unstructured_subscription(state, port.subject_id)
@@ -499,18 +511,20 @@ class BusPublicationWatcher:
     async def _teardown_device(self, state: DeviceWatchState) -> None:
         if state.setup_task is not None and not state.setup_task.done():
             state.setup_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await state.setup_task
             state.setup_task = None
         for task in list(state.subscriber_tasks.values()):
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            # Subscriber tasks may already have failed (e.g. unset port-ID); do not
+            # let those exceptions escape teardown / unfocus.
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
         state.subscriber_tasks.clear()
 
         for task in list(state.unstructured_tasks.values()):
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
         state.unstructured_tasks.clear()
 
@@ -521,6 +535,8 @@ class BusPublicationWatcher:
     async def _subscriber_loop(self, state: DeviceWatchState, port: PublicationPort) -> None:
         assert state.device is not None
         assert port.message_type is not None
+        if not is_subscribable_subject_id(port.subject_id):
+            return
 
         subscriber = state.device.get_subscription(port.port_name)
         async for message, metadata in subscriber:
@@ -541,6 +557,8 @@ class BusPublicationWatcher:
 
     async def _ensure_unstructured_subscription(self, state: DeviceWatchState, subject_id: int) -> None:
         if subject_id in state.unstructured_tasks:
+            return
+        if not is_subscribable_subject_id(subject_id):
             return
 
         if subject_id == HEARTBEAT_SUBJECT_ID:

@@ -467,6 +467,86 @@ async def test_teardown_device_cancels_tasks_and_closes_device() -> None:
 
 
 @pytest.mark.asyncio
+async def test_setup_device_skips_unset_subject_ids_and_still_subscribes() -> None:
+    """Unset Cyphal port-IDs (65535) must not abort focus setup or poison unfocus."""
+    client = _mock_client(node_id=1)
+    watcher = BusPublicationWatcher(client)
+    unset_typed = PublicationPort(
+        port_name="timekeeper_status",
+        subject_id=65535,
+        type_name="uavcan.primitive.Empty.1.0",
+        message_type=load_message_type("uavcan.primitive.Empty.1.0"),
+        parse_status="ok",
+    )
+    unset_unstructured = PublicationPort(
+        port_name="custom_unset",
+        subject_id=65535,
+        type_name="missing.namespace.Message.1.0",
+        message_type=None,
+        parse_status="missing_dsdl",
+    )
+    ok_port = PublicationPort(
+        port_name="status",
+        subject_id=6060,
+        type_name="uavcan.primitive.Empty.1.0",
+        message_type=load_message_type("uavcan.primitive.Empty.1.0"),
+        parse_status="ok",
+    )
+
+    mock_device = MagicMock()
+    mock_device.wait_for_initialization = AsyncMock()
+
+    with (
+        patch(
+            "cyphal_device_library.publication_watch.discover_publication_ports_remote",
+            AsyncMock(return_value=[unset_typed, unset_unstructured, ok_port]),
+        ),
+        patch("cyphal_device_library.publication_watch.Device", return_value=mock_device),
+        patch.object(watcher, "_ensure_unstructured_subscription", AsyncMock()) as ensure_unstructured,
+    ):
+        state = DeviceWatchState(node_id=0, device_info={"node_id": 0})
+        watcher.devices[0] = state
+        await watcher._setup_device(state)
+        for task in list(state.subscriber_tasks.values()):
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+
+    assert set(state.publications) == {"timekeeper_status", "custom_unset", "status"}
+    assert "status" in state.subscriber_tasks
+    assert "timekeeper_status" not in state.subscriber_tasks
+    ensure_unstructured.assert_any_await(state, HEARTBEAT_SUBJECT_ID)
+    assert all(call.args[1] != 65535 for call in ensure_unstructured.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_teardown_device_ignores_failed_subscriber_task_exceptions() -> None:
+    client = _mock_client()
+    watcher = BusPublicationWatcher(client)
+
+    async def _fail_like_unset_port() -> None:
+        raise ValueError("Default port-ID 65535 is not valid for a sub-port")
+
+    failed_task = asyncio.create_task(_fail_like_unset_port(), name="unset-port")
+    await asyncio.sleep(0)
+    assert failed_task.done()
+    mock_device = MagicMock()
+
+    state = DeviceWatchState(
+        node_id=0,
+        device_info={"node_id": 0},
+        device=mock_device,
+        subscriber_tasks={"timekeeper_status": failed_task},
+    )
+
+    await watcher._teardown_device(state)
+
+    assert state.subscriber_tasks == {}
+    mock_device.close.assert_called_once()
+    assert state.device is None
+
+
+@pytest.mark.asyncio
 async def test_subscriber_loop_records_matching_messages() -> None:
     client = _mock_client()
     watcher = BusPublicationWatcher(client)
