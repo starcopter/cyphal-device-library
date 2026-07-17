@@ -112,8 +112,13 @@ class DeviceWatchState:
 class BusPublicationWatcher:
     """Watch Cyphal publications from multiple devices using one :class:`~cyphal_device_library.client.Client`.
 
-    The watcher polls :attr:`Client.node_tracker` for online nodes. For each new remote
-    node it:
+    The watcher polls :attr:`Client.node_tracker` for online nodes and registers each
+    new remote node for **presence only** (heartbeat/name metadata in
+    :attr:`devices`). Publication discovery and subscriptions start only after an
+    explicit :meth:`focus` call. :meth:`unfocus` tears down subscribers and clears
+    publication-derived state while keeping the presence row.
+
+    For a focused node, setup:
 
     1. Discovers ``uavcan.pub.<port_name>.{id,type,dt_ms}`` registers.
     2. Creates a :class:`~cyphal_device_library.device.Device` with the publication
@@ -306,7 +311,7 @@ class BusPublicationWatcher:
         current_ids = set(entries)
         known_ids = set(self.devices)
 
-        # New nodes: register immediately, then discover publications in parallel.
+        # New nodes: register presence only; call focus() to start publication setup.
         for node_id in current_ids - known_ids:
             if node_id == self.client.node.id:
                 continue
@@ -358,6 +363,8 @@ class BusPublicationWatcher:
         state.publications.clear()
         state.registry_entries = []
         state.port_stats.clear()
+        state.known_subject_ids.clear()
+        self.unknown_ports.pop(node_id, None)
         self._drop_port_message_history(node_id)
         self._notify_state_changed()
 
