@@ -90,26 +90,65 @@ async def test_start_and_stop_lifecycle(instant_sleep: None) -> None:
 
 
 @pytest.mark.asyncio
+async def test_reconcile_does_not_auto_setup_publications(instant_sleep: None) -> None:
+    client = _mock_client()
+    client.node_tracker.registry = {42: _heartbeat_entry()}
+    watcher = BusPublicationWatcher(client)
+    with patch.object(watcher, "_setup_device", new_callable=AsyncMock) as setup:
+        await _run_device_loop_once(watcher)
+        setup.assert_not_called()
+    assert 42 in watcher.devices
+    assert watcher.devices[42].subscriber_tasks == {}
+
+
+@pytest.mark.asyncio
+async def test_focus_runs_setup_unfocus_tears_down_subscribers(instant_sleep: None) -> None:
+    client = _mock_client()
+    client.node_tracker.registry = {42: _heartbeat_entry()}
+    watcher = BusPublicationWatcher(client)
+    await _run_device_loop_once(watcher)
+
+    with (
+        patch(
+            "cyphal_device_library.publication_watch.discover_publication_ports_remote",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch("cyphal_device_library.publication_watch.Device") as device_cls,
+        patch(
+            "cyphal_device_library.publication_watch.Registry",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "cyphal_device_library.publication_watch.registry_to_json_entries",
+            return_value=[],
+        ),
+    ):
+        device = MagicMock()
+        device.wait_for_initialization = AsyncMock()
+        device_cls.return_value = device
+        await watcher.focus(42)
+        assert 42 in watcher.focused_node_ids
+        device.wait_for_initialization.assert_awaited()
+
+        await watcher.unfocus(42)
+        assert 42 not in watcher.focused_node_ids
+        device.close.assert_called()
+
+
+@pytest.mark.asyncio
 async def test_device_loop_adds_remote_nodes(instant_sleep: None) -> None:
     client = _mock_client(node_id=1)
     client.node_tracker.registry = {42: _heartbeat_entry()}
 
     watcher = BusPublicationWatcher(client)
-    setup_calls: list[int] = []
-
-    async def _setup_device(state: DeviceWatchState) -> None:
-        setup_calls.append(state.node_id)
-        state.device_info["setup"] = True
-
-    watcher._setup_device = _setup_device  # type: ignore[method-assign]
 
     await _run_device_loop_once(watcher)
-    await _await_device_setup_tasks(watcher)
 
-    assert setup_calls == [42]
     assert 42 in watcher.devices
     assert watcher.devices[42].device_info["node_id"] == 42
     assert watcher.devices[42].device_info["uptime_s"] == 10
+    assert watcher.devices[42].subscriber_tasks == {}
     assert 1 not in watcher.devices
 
 
@@ -179,11 +218,21 @@ async def test_device_loop_registers_devices_before_setup_completes(instant_slee
     assert 43 in watcher.devices
     assert watcher.devices[42].device_info["node_id"] == 42
     assert watcher.devices[43].device_info["node_id"] == 43
-    await _REAL_ASYNCIO_SLEEP(0)
+    assert setup_started == []
+
+    focus_tasks = [
+        asyncio.create_task(watcher.focus(42)),
+        asyncio.create_task(watcher.focus(43)),
+    ]
+    for _ in range(10):
+        await _REAL_ASYNCIO_SLEEP(0)
+        if sorted(setup_started) == [42, 43]:
+            break
+
     assert sorted(setup_started) == [42, 43]
 
     setup_release.set()
-    await _await_device_setup_tasks(watcher)
+    await asyncio.gather(*focus_tasks)
 
 
 @pytest.mark.asyncio

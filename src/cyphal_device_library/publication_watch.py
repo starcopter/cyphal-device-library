@@ -176,7 +176,13 @@ class BusPublicationWatcher:
         self._device_loop_task: asyncio.Task[None] | None = None
         self._promiscuous_task: asyncio.Task[None] | None = None
         self._setup_tasks: dict[int, asyncio.Task[None]] = {}
+        self._focused_node_ids: set[int] = set()
+        self.last_bus_activity_unix: float = 0.0
         self._lock = asyncio.Lock()
+
+    @property
+    def focused_node_ids(self) -> set[int]:
+        return set(self._focused_node_ids)
 
     @property
     def is_running(self) -> bool:
@@ -207,6 +213,7 @@ class BusPublicationWatcher:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self._setup_tasks.clear()
+        self._focused_node_ids.clear()
 
         async with self._lock:
             for state in list(self.devices.values()):
@@ -307,11 +314,12 @@ class BusPublicationWatcher:
             device_info = self._serialize_node_entry(node_id, entry)
             async with self._lock:
                 self.devices[node_id] = DeviceWatchState(node_id=node_id, device_info=device_info)
+            self.last_bus_activity_unix = time.time()
             self._notify_state_changed()
-            self._start_device_setup(node_id)
 
         # Departed nodes: cancel in-flight setup, subscribers, and cached state.
         for node_id in known_ids - current_ids:
+            self._focused_node_ids.discard(node_id)
             await self._cancel_device_setup(node_id)
             async with self._lock:
                 state = self.devices.pop(node_id, None)
@@ -325,6 +333,33 @@ class BusPublicationWatcher:
         for node_id, entry in entries.items():
             if node_id in self.devices:
                 self.devices[node_id].device_info = self._serialize_node_entry(node_id, entry)
+                self.last_bus_activity_unix = time.time()
+
+    async def focus(self, node_id: int) -> None:
+        if node_id in self._focused_node_ids:
+            return
+        state = self.devices.get(node_id)
+        if state is None:
+            return
+        self._focused_node_ids.add(node_id)
+        self._start_device_setup(node_id)
+        task = self._setup_tasks.get(node_id)
+        if task is not None:
+            await task
+
+    async def unfocus(self, node_id: int) -> None:
+        self._focused_node_ids.discard(node_id)
+        await self._cancel_device_setup(node_id)
+        state = self.devices.get(node_id)
+        if state is None:
+            return
+        await self._teardown_device(state)
+        # Keep presence row; clear publication-derived fields
+        state.publications.clear()
+        state.registry_entries = []
+        state.port_stats.clear()
+        self._drop_port_message_history(node_id)
+        self._notify_state_changed()
 
     def _start_device_setup(self, node_id: int) -> None:
         existing = self._setup_tasks.get(node_id)
