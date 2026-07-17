@@ -363,6 +363,7 @@ async def test_setup_device_uses_typed_and_unstructured_subscriptions() -> None:
     ):
         state = DeviceWatchState(node_id=42, device_info={"node_id": 42})
         watcher.devices[42] = state
+        watcher._focused_node_ids.add(42)
         await watcher._setup_device(state)
         await asyncio.sleep(0)
         for task in state.subscriber_tasks.values():
@@ -400,6 +401,7 @@ async def test_setup_device_does_not_construct_device_even_for_node_zero() -> No
     ):
         state = DeviceWatchState(node_id=0, device_info={"node_id": 0})
         watcher.devices[0] = state
+        watcher._focused_node_ids.add(0)
         await watcher._setup_device(state)
         await asyncio.sleep(0)
         for task in list(state.subscriber_tasks.values()):
@@ -440,6 +442,7 @@ async def test_setup_device_pushes_registry_snapshot() -> None:
     ):
         state = DeviceWatchState(node_id=42, device_info={"node_id": 42})
         watcher.devices[42] = state
+        watcher._focused_node_ids.add(42)
         await watcher._setup_device(state)
         for task in state.subscriber_tasks.values():
             task.cancel()
@@ -518,6 +521,7 @@ async def test_setup_device_skips_unset_subject_ids_and_still_subscribes() -> No
     ):
         state = DeviceWatchState(node_id=0, device_info={"node_id": 0})
         watcher.devices[0] = state
+        watcher._focused_node_ids.add(0)
         await watcher._setup_device(state)
         for task in list(state.subscriber_tasks.values()):
             task.cancel()
@@ -950,3 +954,65 @@ async def test_unfocus_keeps_publications_and_registry() -> None:
     assert state.port_stats == {}
     assert 42 not in watcher.unknown_ports
     assert state.subscriber_tasks == {}
+
+
+@pytest.mark.asyncio
+async def test_focus_with_warm_catalog_skips_rediscovery() -> None:
+    client = _mock_client(node_id=1)
+    watcher = BusPublicationWatcher(client)
+    port = PublicationPort(
+        port_name="status",
+        subject_id=6060,
+        type_name="uavcan.primitive.Empty.1.0",
+        message_type=load_message_type("uavcan.primitive.Empty.1.0"),
+        parse_status="ok",
+    )
+    state = DeviceWatchState(
+        node_id=42,
+        device_info={"node_id": 42},
+        publications={"status": port},
+        registry_entries=[{"name": "uavcan.pub.status.id", "value": [6060]}],
+        known_subject_ids={6060},
+    )
+    watcher.devices[42] = state
+
+    with (
+        patch(
+            "cyphal_device_library.publication_watch.discover_publication_ports_remote",
+            AsyncMock(),
+        ) as discover,
+        patch.object(watcher, "_ensure_unstructured_subscription", AsyncMock()),
+    ):
+        await watcher.focus(42)
+        for task in list(state.subscriber_tasks.values()):
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+
+    discover.assert_not_awaited()
+    assert "status" in state.subscriber_tasks or client.node.make_subscriber.called
+
+
+@pytest.mark.asyncio
+async def test_discover_device_catalog_does_not_start_subscribers() -> None:
+    client = _mock_client(node_id=1)
+    watcher = BusPublicationWatcher(client)
+    port = PublicationPort(
+        port_name="status",
+        subject_id=6060,
+        type_name="uavcan.primitive.Empty.1.0",
+        message_type=load_message_type("uavcan.primitive.Empty.1.0"),
+        parse_status="ok",
+    )
+    state = DeviceWatchState(node_id=42, device_info={"node_id": 42})
+    watcher.devices[42] = state
+
+    with patch(
+        "cyphal_device_library.publication_watch.discover_publication_ports_remote",
+        AsyncMock(return_value=[port]),
+    ):
+        await watcher._discover_device_catalog(state)
+
+    assert state.publications == {"status": port}
+    assert state.subscriber_tasks == {}
+    assert state.unstructured_tasks == {}

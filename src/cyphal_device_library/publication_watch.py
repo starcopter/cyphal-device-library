@@ -30,6 +30,7 @@ MAX_SUBJECT_ID = 8191
 DEFAULT_MAX_MESSAGES = 200
 DEFAULT_MAX_MESSAGES_PER_PORT = 50
 DEFAULT_NOTIFY_BATCH = 30
+CATALOG_DISCOVERY_STAGGER_S = 0.1
 
 
 def is_subscribable_subject_id(subject_id: int) -> bool:
@@ -189,6 +190,7 @@ class BusPublicationWatcher:
         self._device_loop_task: asyncio.Task[None] | None = None
         self._promiscuous_task: asyncio.Task[None] | None = None
         self._setup_tasks: dict[int, asyncio.Task[None]] = {}
+        self._catalog_tasks: dict[int, asyncio.Task[None]] = {}
         self._focused_node_ids: set[int] = set()
         self.last_bus_activity_unix: float = 0.0
         self._lock = asyncio.Lock()
@@ -437,7 +439,10 @@ class BusPublicationWatcher:
     def _device_still_active(self, state: DeviceWatchState) -> bool:
         return self.devices.get(state.node_id) is state
 
-    async def _setup_device(self, state: DeviceWatchState) -> None:
+    def _catalog_is_warm(self, state: DeviceWatchState) -> bool:
+        return bool(state.publications) or bool(state.registry_entries)
+
+    async def _discover_device_catalog(self, state: DeviceWatchState) -> None:
         # List uavcan.pub.* registers and build the publication catalog.
         # Do not construct a Device here: Device.__init__ re-fetches every
         # publication register in an all-or-nothing TaskGroup. On busy nodes
@@ -449,10 +454,22 @@ class BusPublicationWatcher:
         if not self._device_still_active(state):
             return
         state.registry_entries = registry_to_json_entries(registry)
-        self._notify_state_changed()
         state.publications = {port.port_name: port for port in publications}
         state.known_subject_ids = {port.subject_id for port in publications}
+        self._notify_state_changed()
 
+    async def _ensure_catalog(self, state: DeviceWatchState) -> None:
+        if self._catalog_is_warm(state):
+            return
+        catalog_task = self._catalog_tasks.get(state.node_id)
+        if catalog_task is not None and not catalog_task.done():
+            await catalog_task
+            if self._catalog_is_warm(state):
+                return
+        await self._discover_device_catalog(state)
+
+    async def _start_device_subscribers(self, state: DeviceWatchState) -> None:
+        publications = list(state.publications.values())
         subscribed_subjects: set[int] = set()
         typed_by_subject: dict[int, PublicationPort] = {}
         for port in publications:
@@ -485,6 +502,14 @@ class BusPublicationWatcher:
         # Observe heartbeat on the standard subject even when not in the pub catalog.
         if HEARTBEAT_SUBJECT_ID not in subscribed_subjects:
             await self._ensure_unstructured_subscription(state, HEARTBEAT_SUBJECT_ID)
+
+    async def _setup_device(self, state: DeviceWatchState) -> None:
+        await self._ensure_catalog(state)
+        if not self._device_still_active(state):
+            return
+        if state.node_id not in self._focused_node_ids:
+            return
+        await self._start_device_subscribers(state)
 
     async def _teardown_device(self, state: DeviceWatchState) -> None:
         if state.setup_task is not None and not state.setup_task.done():
