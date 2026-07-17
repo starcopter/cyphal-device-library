@@ -1,4 +1,4 @@
-"""Bus-wide publication watching using Client and Device."""
+"""Bus-wide publication watching using Client and Registry discovery."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ import uavcan.node
 import uavcan.primitive
 
 from .client import Client
-from .device import Device
 from .publications import PublicationPort, discover_publication_ports_remote
 from .registry import Registry, registry_to_json_entries
 from .util.message_serialize import ensure_json_serializable, serialize_message
@@ -107,7 +106,6 @@ class DeviceWatchState:
 
     node_id: int
     device_info: dict[str, Any]
-    device: Device | None = None
     publications: dict[str, PublicationPort] = field(default_factory=dict)
     subscriber_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict)
     unstructured_tasks: dict[int, asyncio.Task[None]] = field(default_factory=dict)
@@ -115,6 +113,8 @@ class DeviceWatchState:
     known_subject_ids: set[int] = field(default_factory=set)
     registry_entries: list[dict[str, Any]] = field(default_factory=list)
     setup_task: asyncio.Task[None] | None = None
+    # Keep open typed subscribers so they are closed on teardown.
+    typed_subscribers: dict[str, pycyphal.presentation.Subscriber[Any]] = field(default_factory=dict)
 
 
 class BusPublicationWatcher:
@@ -129,11 +129,9 @@ class BusPublicationWatcher:
     For a focused node, setup:
 
     1. Discovers ``uavcan.pub.<port_name>.{id,type,dt_ms}`` registers.
-    2. Creates a :class:`~cyphal_device_library.device.Device` with the publication
-       registers pre-fetched.
-    3. Subscribes to each catalogued port via :meth:`Device.get_subscription` when the
+    2. Subscribes to each catalogued port via ``node.make_subscriber`` when the
        DSDL type is available locally, or via an unstructured subscriber otherwise.
-    4. Subscribes to :data:`uavcan.node.Heartbeat_1_0` on the fixed subject ID so
+    3. Subscribes to :data:`uavcan.node.Heartbeat_1_0` on the fixed subject ID so
        heartbeat traffic on non-catalogued ports can be observed.
 
     Received messages are stored in :attr:`message_buffer` and queued in an internal
@@ -442,6 +440,11 @@ class BusPublicationWatcher:
 
     async def _setup_device(self, state: DeviceWatchState) -> None:
         # List uavcan.pub.* registers and build the publication catalog.
+        # Do not construct a Device here: Device.__init__ re-fetches every
+        # publication register in an all-or-nothing TaskGroup. On busy nodes
+        # (e.g. motherboard at node-ID 0 with many pubs) a single refresh
+        # failure aborts init, errors are swallowed, and subscribers never
+        # start — while the catalog from this discovery still reaches the UI.
         registry = Registry(state.node_id, self.client.node.make_client)
         publications = await discover_publication_ports_remote(registry)
         if not self._device_still_active(state):
@@ -450,30 +453,6 @@ class BusPublicationWatcher:
         self._notify_state_changed()
         state.publications = {port.port_name: port for port in publications}
         state.known_subject_ids = {port.subject_id for port in publications}
-
-        # Pre-fetch only publication-related registers on the Device.
-        register_names: list[str] = []
-        for port in publications:
-            register_names.extend(
-                [
-                    f"uavcan.pub.{port.port_name}.id",
-                    f"uavcan.pub.{port.port_name}.type",
-                ]
-            )
-            if port.dt_ms is not None:
-                register_names.append(f"uavcan.pub.{port.port_name}.dt_ms")
-
-        device = Device(
-            self.client,
-            state.node_id,
-            discover_registers=register_names or False,
-            owns_client=False,
-        )
-        await device.wait_for_initialization(timeout=10.0)
-        if not self._device_still_active(state):
-            device.close()
-            return
-        state.device = device
 
         subscribed_subjects: set[int] = set()
         typed_by_subject: dict[int, PublicationPort] = {}
@@ -528,32 +507,59 @@ class BusPublicationWatcher:
                 await task
         state.unstructured_tasks.clear()
 
-        if state.device is not None:
-            state.device.close()
-            state.device = None
+        for subscriber in list(state.typed_subscribers.values()):
+            with contextlib.suppress(Exception):
+                subscriber.close()
+        state.typed_subscribers.clear()
 
     async def _subscriber_loop(self, state: DeviceWatchState, port: PublicationPort) -> None:
-        assert state.device is not None
         assert port.message_type is not None
         if not is_subscribable_subject_id(port.subject_id):
             return
 
-        subscriber = state.device.get_subscription(port.port_name)
-        async for message, metadata in subscriber:
-            if self._stop_event.is_set():
-                return
-            # Ignore transfers relayed from other nodes on the same subject ID.
-            if metadata.source_node_id != state.node_id:
-                continue
-            await self._record_message(
-                state=state,
-                port_name=port.port_name,
-                subject_id=port.subject_id,
-                type_name=port.type_name,
-                fields=serialize_message(message),
-                transfer_id=getattr(metadata, "transfer_id", None),
-                parse_status="ok",
+        try:
+            subscriber = self.client.node.make_subscriber(port.message_type, port.subject_id)
+        except Exception:
+            LOGGER.warning(
+                "Failed to subscribe to node %s port %s (subject %s)",
+                state.node_id,
+                port.port_name,
+                port.subject_id,
+                exc_info=True,
             )
+            return
+
+        state.typed_subscribers[port.port_name] = subscriber
+        try:
+            async for message, metadata in subscriber:
+                if self._stop_event.is_set():
+                    return
+                # Ignore transfers relayed from other nodes on the same subject ID.
+                # Use `is not None` so node-ID 0 is not treated as missing.
+                if metadata.source_node_id is None or metadata.source_node_id != state.node_id:
+                    continue
+                await self._record_message(
+                    state=state,
+                    port_name=port.port_name,
+                    subject_id=port.subject_id,
+                    type_name=port.type_name,
+                    fields=serialize_message(message),
+                    transfer_id=getattr(metadata, "transfer_id", None),
+                    parse_status="ok",
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOGGER.warning(
+                "Subscriber loop failed for node %s port %s",
+                state.node_id,
+                port.port_name,
+                exc_info=True,
+            )
+        finally:
+            with contextlib.suppress(Exception):
+                subscriber.close()
+            state.typed_subscribers.pop(port.port_name, None)
 
     async def _ensure_unstructured_subscription(self, state: DeviceWatchState, subject_id: int) -> None:
         if subject_id in state.unstructured_tasks:
@@ -591,7 +597,7 @@ class BusPublicationWatcher:
         async for message, metadata in subscriber:
             if self._stop_event.is_set():
                 return
-            if metadata.source_node_id != state.node_id:
+            if metadata.source_node_id is None or metadata.source_node_id != state.node_id:
                 continue
 
             await self._record_message(
@@ -613,7 +619,7 @@ class BusPublicationWatcher:
         async for message, metadata in subscriber:
             if self._stop_event.is_set():
                 return
-            if metadata.source_node_id != state.node_id:
+            if metadata.source_node_id is None or metadata.source_node_id != state.node_id:
                 continue
 
             port_name = self._resolve_port_name(state, subject_id)

@@ -114,7 +114,6 @@ async def test_focus_runs_setup_unfocus_tears_down_subscribers(instant_sleep: No
             new_callable=AsyncMock,
             return_value=[],
         ),
-        patch("cyphal_device_library.publication_watch.Device") as device_cls,
         patch(
             "cyphal_device_library.publication_watch.Registry",
             return_value=MagicMock(),
@@ -124,16 +123,11 @@ async def test_focus_runs_setup_unfocus_tears_down_subscribers(instant_sleep: No
             return_value=[],
         ),
     ):
-        device = MagicMock()
-        device.wait_for_initialization = AsyncMock()
-        device_cls.return_value = device
         await watcher.focus(42)
         assert 42 in watcher.focused_node_ids
-        device.wait_for_initialization.assert_awaited()
 
         await watcher.unfocus(42)
         assert 42 not in watcher.focused_node_ids
-        device.close.assert_called()
 
 
 @pytest.mark.asyncio
@@ -321,7 +315,6 @@ async def test_device_loop_notifies_when_device_is_registered(instant_sleep: Non
 async def test_stop_tears_down_watched_devices() -> None:
     client = _mock_client(node_id=1)
     watcher = BusPublicationWatcher(client)
-    mock_device = MagicMock()
 
     async def _hang_forever() -> None:
         await asyncio.Event().wait()
@@ -331,7 +324,6 @@ async def test_stop_tears_down_watched_devices() -> None:
     watcher.devices[42] = DeviceWatchState(
         node_id=42,
         device_info={"node_id": 42},
-        device=mock_device,
         subscriber_tasks={"status": hang_task},
     )
     watcher.unknown_ports[42] = {8080: PortStats()}
@@ -341,7 +333,6 @@ async def test_stop_tears_down_watched_devices() -> None:
     assert watcher.devices == {}
     assert watcher.unknown_ports == {}
     assert hang_task.cancelled() or hang_task.done()
-    mock_device.close.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -363,33 +354,61 @@ async def test_setup_device_uses_typed_and_unstructured_subscriptions() -> None:
         parse_status="missing_dsdl",
     )
 
-    mock_device = MagicMock()
-    mock_device.wait_for_initialization = AsyncMock()
-
     with (
         patch(
             "cyphal_device_library.publication_watch.discover_publication_ports_remote",
             AsyncMock(return_value=[typed_port, missing_port]),
         ),
-        patch("cyphal_device_library.publication_watch.Device", return_value=mock_device) as device_cls,
         patch.object(watcher, "_ensure_unstructured_subscription", AsyncMock()) as ensure_unstructured,
     ):
         state = DeviceWatchState(node_id=42, device_info={"node_id": 42})
         watcher.devices[42] = state
         await watcher._setup_device(state)
+        await asyncio.sleep(0)
         for task in state.subscriber_tasks.values():
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
 
-    device_cls.assert_called_once()
-    assert device_cls.call_args.kwargs["owns_client"] is False
-    assert mock_device is state.device
     assert set(state.publications) == {"status", "custom"}
     assert "status" in state.subscriber_tasks
     assert "custom" not in state.subscriber_tasks
+    client.node.make_subscriber.assert_called()
     ensure_unstructured.assert_any_await(state, missing_port.subject_id)
     ensure_unstructured.assert_any_await(state, HEARTBEAT_SUBJECT_ID)
+
+
+@pytest.mark.asyncio
+async def test_setup_device_does_not_construct_device_even_for_node_zero() -> None:
+    """Node-ID 0 (motherboard) must not go through Device init re-fetch storm."""
+    client = _mock_client(node_id=126)
+    watcher = BusPublicationWatcher(client)
+    typed_port = PublicationPort(
+        port_name="DC_bus",
+        subject_id=6008,
+        type_name="uavcan.primitive.Empty.1.0",
+        message_type=load_message_type("uavcan.primitive.Empty.1.0"),
+        parse_status="ok",
+    )
+
+    with (
+        patch(
+            "cyphal_device_library.publication_watch.discover_publication_ports_remote",
+            AsyncMock(return_value=[typed_port]),
+        ),
+        patch.object(watcher, "_ensure_unstructured_subscription", AsyncMock()),
+    ):
+        state = DeviceWatchState(node_id=0, device_info={"node_id": 0})
+        watcher.devices[0] = state
+        await watcher._setup_device(state)
+        await asyncio.sleep(0)
+        for task in list(state.subscriber_tasks.values()):
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+
+    assert "DC_bus" in state.subscriber_tasks
+    client.node.make_subscriber.assert_called()
 
 
 @pytest.mark.asyncio
@@ -408,9 +427,6 @@ async def test_setup_device_pushes_registry_snapshot() -> None:
         parse_status="ok",
     )
 
-    mock_device = MagicMock()
-    mock_device.wait_for_initialization = AsyncMock()
-
     with (
         patch(
             "cyphal_device_library.publication_watch.discover_publication_ports_remote",
@@ -420,7 +436,6 @@ async def test_setup_device_pushes_registry_snapshot() -> None:
             "cyphal_device_library.publication_watch.registry_to_json_entries",
             return_value=[{"name": "uavcan.pub.status.id", "dtype": "natural16[1]", "value": [6060]}],
         ) as serialize_registry,
-        patch("cyphal_device_library.publication_watch.Device", return_value=mock_device),
         patch.object(watcher, "_ensure_unstructured_subscription", AsyncMock()),
     ):
         state = DeviceWatchState(node_id=42, device_info={"node_id": 42})
@@ -428,7 +443,7 @@ async def test_setup_device_pushes_registry_snapshot() -> None:
         await watcher._setup_device(state)
         for task in state.subscriber_tasks.values():
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
 
     serialize_registry.assert_called_once()
@@ -437,7 +452,7 @@ async def test_setup_device_pushes_registry_snapshot() -> None:
 
 
 @pytest.mark.asyncio
-async def test_teardown_device_cancels_tasks_and_closes_device() -> None:
+async def test_teardown_device_cancels_tasks_and_closes_subscribers() -> None:
     client = _mock_client()
     watcher = BusPublicationWatcher(client)
 
@@ -446,14 +461,15 @@ async def test_teardown_device_cancels_tasks_and_closes_device() -> None:
 
     typed_task = asyncio.create_task(_hang_forever(), name="typed")
     unstructured_task = asyncio.create_task(_hang_forever(), name="unstructured")
-    mock_device = MagicMock()
+    typed_sub = MagicMock()
+    typed_sub.close = MagicMock()
 
     state = DeviceWatchState(
         node_id=42,
         device_info={"node_id": 42},
-        device=mock_device,
         subscriber_tasks={"status": typed_task},
         unstructured_tasks={HEARTBEAT_SUBJECT_ID: unstructured_task},
+        typed_subscribers={"status": typed_sub},
     )
 
     await watcher._teardown_device(state)
@@ -462,8 +478,8 @@ async def test_teardown_device_cancels_tasks_and_closes_device() -> None:
     assert unstructured_task.cancelled() or unstructured_task.done()
     assert state.subscriber_tasks == {}
     assert state.unstructured_tasks == {}
-    mock_device.close.assert_called_once()
-    assert state.device is None
+    typed_sub.close.assert_called_once()
+    assert state.typed_subscribers == {}
 
 
 @pytest.mark.asyncio
@@ -493,15 +509,11 @@ async def test_setup_device_skips_unset_subject_ids_and_still_subscribes() -> No
         parse_status="ok",
     )
 
-    mock_device = MagicMock()
-    mock_device.wait_for_initialization = AsyncMock()
-
     with (
         patch(
             "cyphal_device_library.publication_watch.discover_publication_ports_remote",
             AsyncMock(return_value=[unset_typed, unset_unstructured, ok_port]),
         ),
-        patch("cyphal_device_library.publication_watch.Device", return_value=mock_device),
         patch.object(watcher, "_ensure_unstructured_subscription", AsyncMock()) as ensure_unstructured,
     ):
         state = DeviceWatchState(node_id=0, device_info={"node_id": 0})
@@ -530,28 +542,24 @@ async def test_teardown_device_ignores_failed_subscriber_task_exceptions() -> No
     failed_task = asyncio.create_task(_fail_like_unset_port(), name="unset-port")
     await asyncio.sleep(0)
     assert failed_task.done()
-    mock_device = MagicMock()
 
     state = DeviceWatchState(
         node_id=0,
         device_info={"node_id": 0},
-        device=mock_device,
         subscriber_tasks={"timekeeper_status": failed_task},
     )
 
     await watcher._teardown_device(state)
 
     assert state.subscriber_tasks == {}
-    mock_device.close.assert_called_once()
-    assert state.device is None
+    assert state.typed_subscribers == {}
 
 
 @pytest.mark.asyncio
 async def test_subscriber_loop_records_matching_messages() -> None:
     client = _mock_client()
     watcher = BusPublicationWatcher(client)
-    mock_device = MagicMock()
-    state = DeviceWatchState(node_id=42, device_info={"node_id": 42}, device=mock_device)
+    state = DeviceWatchState(node_id=42, device_info={"node_id": 42})
     port = PublicationPort(
         port_name="status",
         subject_id=6060,
@@ -566,7 +574,7 @@ async def test_subscriber_loop_records_matching_messages() -> None:
         yield message, metadata
         watcher._stop_event.set()
 
-    mock_device.get_subscription.return_value = _subscription()
+    client.node.make_subscriber.return_value = _subscription()
     task = asyncio.create_task(watcher._subscriber_loop(state, port))
     await task
 
@@ -581,8 +589,7 @@ async def test_subscriber_loop_records_matching_messages() -> None:
 async def test_subscriber_loop_ignores_other_source_nodes() -> None:
     client = _mock_client()
     watcher = BusPublicationWatcher(client)
-    mock_device = MagicMock()
-    state = DeviceWatchState(node_id=42, device_info={"node_id": 42}, device=mock_device)
+    state = DeviceWatchState(node_id=42, device_info={"node_id": 42})
     port = PublicationPort(
         port_name="status",
         subject_id=6060,
@@ -596,7 +603,7 @@ async def test_subscriber_loop_ignores_other_source_nodes() -> None:
         yield uavcan.primitive.Empty_1_0(), metadata
         watcher._stop_event.set()
 
-    mock_device.get_subscription.return_value = _subscription()
+    client.node.make_subscriber.return_value = _subscription()
     await watcher._subscriber_loop(state, port)
 
     assert len(watcher.message_buffer) == 0
