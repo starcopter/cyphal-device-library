@@ -357,8 +357,13 @@ class BusPublicationWatcher:
         # Refresh heartbeat/name metadata for nodes still online.
         for node_id, entry in entries.items():
             if node_id in self.devices:
-                self.devices[node_id].device_info = self._serialize_node_entry(node_id, entry)
-                self.last_bus_activity_unix = time.time()
+                previous_info = self.devices[node_id].device_info
+                new_info = self._serialize_node_entry(node_id, entry)
+                if self._heartbeat_activity_signature(previous_info) != self._heartbeat_activity_signature(
+                    new_info
+                ):
+                    self.last_bus_activity_unix = time.time()
+                self.devices[node_id].device_info = new_info
 
     async def focus(self, node_id: int) -> None:
         if node_id in self._focused_node_ids:
@@ -678,6 +683,7 @@ class BusPublicationWatcher:
             port_history = deque(maxlen=self.max_messages_per_port)
             self._port_message_history[history_key] = port_history
         port_history.append(parsed)
+        self.last_bus_activity_unix = time.time()
 
     def _record_unknown(self, node_id: int, subject_id: int, *, byte_count: int) -> None:
         node_stats = self.unknown_ports.setdefault(node_id, {})
@@ -687,6 +693,16 @@ class BusPublicationWatcher:
     def _notify_state_changed(self) -> None:
         if self._on_state_changed is not None:
             self._on_state_changed()
+
+    @staticmethod
+    def _heartbeat_activity_signature(device_info: dict[str, Any]) -> tuple[Any, ...]:
+        """Fields that indicate fresh heartbeat traffic when they change."""
+        return (
+            device_info.get("uptime_s"),
+            device_info.get("health"),
+            device_info.get("mode"),
+            device_info.get("vssc"),
+        )
 
     @staticmethod
     def _serialize_node_entry(node_id: int, entry: Any) -> dict[str, Any]:

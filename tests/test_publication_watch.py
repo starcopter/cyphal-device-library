@@ -195,6 +195,64 @@ async def test_device_loop_refreshes_existing_node_metadata(instant_sleep: None)
 
 
 @pytest.mark.asyncio
+async def test_reconcile_does_not_bump_bus_activity_for_stale_heartbeat(instant_sleep: None) -> None:
+    """Frozen heartbeat metadata must not refresh last_bus_activity_unix."""
+    client = _mock_client(node_id=1)
+    entry = _heartbeat_entry(uptime=10, vssc=5)
+    client.node_tracker.registry = {42: entry}
+    watcher = BusPublicationWatcher(client)
+    watcher.last_bus_activity_unix = 1000.0
+    watcher.devices[42] = DeviceWatchState(
+        node_id=42,
+        device_info=BusPublicationWatcher._serialize_node_entry(42, entry),
+    )
+
+    with patch("cyphal_device_library.publication_watch.time.time", return_value=2000.0):
+        await _run_device_loop_once(watcher)
+
+    assert watcher.last_bus_activity_unix == 1000.0
+
+
+@pytest.mark.asyncio
+async def test_reconcile_bumps_bus_activity_when_heartbeat_changes(instant_sleep: None) -> None:
+    client = _mock_client(node_id=1)
+    client.node_tracker.registry = {42: _heartbeat_entry(uptime=10, vssc=5)}
+    watcher = BusPublicationWatcher(client)
+    watcher.last_bus_activity_unix = 1000.0
+    watcher.devices[42] = DeviceWatchState(
+        node_id=42,
+        device_info=BusPublicationWatcher._serialize_node_entry(42, _heartbeat_entry(uptime=10, vssc=5)),
+    )
+
+    client.node_tracker.registry[42] = _heartbeat_entry(uptime=11, vssc=5)
+    with patch("cyphal_device_library.publication_watch.time.time", return_value=2000.0):
+        await _run_device_loop_once(watcher)
+
+    assert watcher.last_bus_activity_unix == 2000.0
+
+
+@pytest.mark.asyncio
+async def test_record_message_bumps_bus_activity(instant_sleep: None) -> None:
+    client = _mock_client()
+    watcher = BusPublicationWatcher(client)
+    watcher.last_bus_activity_unix = 1000.0
+    state = DeviceWatchState(node_id=42, device_info={"node_id": 42})
+
+    with patch("cyphal_device_library.publication_watch.time.time", return_value=2000.0):
+        await watcher._record_message(
+            state=state,
+            port_name="status",
+            subject_id=6060,
+            type_name="uavcan.primitive.Empty.1.0",
+            fields={},
+            transfer_id=1,
+            parse_status="ok",
+        )
+
+    assert watcher.last_bus_activity_unix == 2000.0
+
+
+@pytest.mark.asyncio
 async def test_device_loop_registers_devices_before_setup_completes(instant_sleep: None) -> None:
     client = _mock_client(node_id=1)
     client.node_tracker.registry = {
