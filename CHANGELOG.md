@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-* _Nothing yet._
+* feat: presence-only publication watch with focus/unfocus. [PR #23](https://github.com/starcopter/cyphal-device-library/pull/23).
 
 ## [0.7.4] - 2026-07-10
 
