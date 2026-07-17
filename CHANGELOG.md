@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-* _Nothing yet._
+* fix: warm catalog + fast focus without Device re-init. [PR #25](https://github.com/starcopter/cyphal-device-library/pull/25).
 
 ## [0.7.5] - 2026-07-17
 
