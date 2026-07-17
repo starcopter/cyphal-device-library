@@ -112,8 +112,13 @@ class DeviceWatchState:
 class BusPublicationWatcher:
     """Watch Cyphal publications from multiple devices using one :class:`~cyphal_device_library.client.Client`.
 
-    The watcher polls :attr:`Client.node_tracker` for online nodes. For each new remote
-    node it:
+    The watcher polls :attr:`Client.node_tracker` for online nodes and registers each
+    new remote node for **presence only** (heartbeat/name metadata in
+    :attr:`devices`). Publication discovery and subscriptions start only after an
+    explicit :meth:`focus` call. :meth:`unfocus` tears down subscribers and clears
+    publication-derived state while keeping the presence row.
+
+    For a focused node, setup:
 
     1. Discovers ``uavcan.pub.<port_name>.{id,type,dt_ms}`` registers.
     2. Creates a :class:`~cyphal_device_library.device.Device` with the publication
@@ -176,7 +181,13 @@ class BusPublicationWatcher:
         self._device_loop_task: asyncio.Task[None] | None = None
         self._promiscuous_task: asyncio.Task[None] | None = None
         self._setup_tasks: dict[int, asyncio.Task[None]] = {}
+        self._focused_node_ids: set[int] = set()
+        self.last_bus_activity_unix: float = 0.0
         self._lock = asyncio.Lock()
+
+    @property
+    def focused_node_ids(self) -> set[int]:
+        return set(self._focused_node_ids)
 
     @property
     def is_running(self) -> bool:
@@ -207,6 +218,7 @@ class BusPublicationWatcher:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self._setup_tasks.clear()
+        self._focused_node_ids.clear()
 
         async with self._lock:
             for state in list(self.devices.values()):
@@ -242,17 +254,23 @@ class BusPublicationWatcher:
         del self._pending_messages[:limit]
         return batch
 
-    def build_status_payload(self, *, message_limit: int | None = None) -> dict[str, Any]:
+    def build_status_payload(
+        self,
+        *,
+        message_limit: int | None = DEFAULT_NOTIFY_BATCH,
+        include_registry: bool = False,
+        include_message_history: bool = False,
+    ) -> dict[str, Any]:
         """Build a status snapshot."""
         devices_payload = []
         for state in sorted(self.devices.values(), key=lambda item: item.node_id):
-            devices_payload.append(
-                {
-                    **state.device_info,
-                    "publications": [port.to_dict() for port in state.publications.values()],
-                    "registry": state.registry_entries,
-                }
-            )
+            entry: dict[str, Any] = {
+                **state.device_info,
+                "publications": [port.to_dict() for port in state.publications.values()],
+            }
+            if include_registry:
+                entry["registry"] = state.registry_entries
+            devices_payload.append(entry)
 
         unknown_payload = []
         for node_id, ports in sorted(self.unknown_ports.items()):
@@ -267,14 +285,28 @@ class BusPublicationWatcher:
                     stats.to_dict(node_id=state.node_id, port_name=port_name, subject_id=subject_id)
                 )
 
-        return {
+        result: dict[str, Any] = {
             "devices": devices_payload,
             "messages": [message.to_dict() for message in self.drain_pending_messages(limit=message_limit)],
-            "message_history": self.build_message_history_payload(),
             "unknown_ports": unknown_payload,
             "port_stats": port_stats_payload,
             "updated_at_unix": time.time(),
         }
+        if include_message_history:
+            result["message_history"] = self.build_message_history_payload()
+        return result
+
+    def build_focus_status_payload(self, node_id: int) -> dict[str, Any]:
+        """Build a full status snapshot for one focused node."""
+        payload = self.build_status_payload(
+            include_registry=True,
+            include_message_history=True,
+            message_limit=None,
+        )
+        payload["message_history"] = [
+            item for item in payload.get("message_history", []) if item.get("node_id") == node_id
+        ]
+        return payload
 
     async def _device_loop(self) -> None:
         """Poll node tracker and reconcile watched devices with the current bus."""
@@ -299,7 +331,7 @@ class BusPublicationWatcher:
         current_ids = set(entries)
         known_ids = set(self.devices)
 
-        # New nodes: register immediately, then discover publications in parallel.
+        # New nodes: register presence only; call focus() to start publication setup.
         for node_id in current_ids - known_ids:
             if node_id == self.client.node.id:
                 continue
@@ -307,11 +339,12 @@ class BusPublicationWatcher:
             device_info = self._serialize_node_entry(node_id, entry)
             async with self._lock:
                 self.devices[node_id] = DeviceWatchState(node_id=node_id, device_info=device_info)
+            self.last_bus_activity_unix = time.time()
             self._notify_state_changed()
-            self._start_device_setup(node_id)
 
         # Departed nodes: cancel in-flight setup, subscribers, and cached state.
         for node_id in known_ids - current_ids:
+            self._focused_node_ids.discard(node_id)
             await self._cancel_device_setup(node_id)
             async with self._lock:
                 state = self.devices.pop(node_id, None)
@@ -324,7 +357,39 @@ class BusPublicationWatcher:
         # Refresh heartbeat/name metadata for nodes still online.
         for node_id, entry in entries.items():
             if node_id in self.devices:
-                self.devices[node_id].device_info = self._serialize_node_entry(node_id, entry)
+                previous_info = self.devices[node_id].device_info
+                new_info = self._serialize_node_entry(node_id, entry)
+                if self._heartbeat_activity_signature(previous_info) != self._heartbeat_activity_signature(new_info):
+                    self.last_bus_activity_unix = time.time()
+                self.devices[node_id].device_info = new_info
+
+    async def focus(self, node_id: int) -> None:
+        if node_id in self._focused_node_ids:
+            return
+        state = self.devices.get(node_id)
+        if state is None:
+            return
+        self._focused_node_ids.add(node_id)
+        self._start_device_setup(node_id)
+        task = self._setup_tasks.get(node_id)
+        if task is not None:
+            await task
+
+    async def unfocus(self, node_id: int) -> None:
+        self._focused_node_ids.discard(node_id)
+        await self._cancel_device_setup(node_id)
+        state = self.devices.get(node_id)
+        if state is None:
+            return
+        await self._teardown_device(state)
+        # Keep presence row; clear publication-derived fields
+        state.publications.clear()
+        state.registry_entries = []
+        state.port_stats.clear()
+        state.known_subject_ids.clear()
+        self.unknown_ports.pop(node_id, None)
+        self._drop_port_message_history(node_id)
+        self._notify_state_changed()
 
     def _start_device_setup(self, node_id: int) -> None:
         existing = self._setup_tasks.get(node_id)
@@ -616,6 +681,7 @@ class BusPublicationWatcher:
             port_history = deque(maxlen=self.max_messages_per_port)
             self._port_message_history[history_key] = port_history
         port_history.append(parsed)
+        self.last_bus_activity_unix = time.time()
 
     def _record_unknown(self, node_id: int, subject_id: int, *, byte_count: int) -> None:
         node_stats = self.unknown_ports.setdefault(node_id, {})
@@ -625,6 +691,16 @@ class BusPublicationWatcher:
     def _notify_state_changed(self) -> None:
         if self._on_state_changed is not None:
             self._on_state_changed()
+
+    @staticmethod
+    def _heartbeat_activity_signature(device_info: dict[str, Any]) -> tuple[Any, ...]:
+        """Fields that indicate fresh heartbeat traffic when they change."""
+        return (
+            device_info.get("uptime_s"),
+            device_info.get("health"),
+            device_info.get("mode"),
+            device_info.get("vssc"),
+        )
 
     @staticmethod
     def _serialize_node_entry(node_id: int, entry: Any) -> dict[str, Any]:

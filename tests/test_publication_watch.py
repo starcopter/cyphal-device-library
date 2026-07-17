@@ -90,26 +90,65 @@ async def test_start_and_stop_lifecycle(instant_sleep: None) -> None:
 
 
 @pytest.mark.asyncio
+async def test_reconcile_does_not_auto_setup_publications(instant_sleep: None) -> None:
+    client = _mock_client()
+    client.node_tracker.registry = {42: _heartbeat_entry()}
+    watcher = BusPublicationWatcher(client)
+    with patch.object(watcher, "_setup_device", new_callable=AsyncMock) as setup:
+        await _run_device_loop_once(watcher)
+        setup.assert_not_called()
+    assert 42 in watcher.devices
+    assert watcher.devices[42].subscriber_tasks == {}
+
+
+@pytest.mark.asyncio
+async def test_focus_runs_setup_unfocus_tears_down_subscribers(instant_sleep: None) -> None:
+    client = _mock_client()
+    client.node_tracker.registry = {42: _heartbeat_entry()}
+    watcher = BusPublicationWatcher(client)
+    await _run_device_loop_once(watcher)
+
+    with (
+        patch(
+            "cyphal_device_library.publication_watch.discover_publication_ports_remote",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch("cyphal_device_library.publication_watch.Device") as device_cls,
+        patch(
+            "cyphal_device_library.publication_watch.Registry",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "cyphal_device_library.publication_watch.registry_to_json_entries",
+            return_value=[],
+        ),
+    ):
+        device = MagicMock()
+        device.wait_for_initialization = AsyncMock()
+        device_cls.return_value = device
+        await watcher.focus(42)
+        assert 42 in watcher.focused_node_ids
+        device.wait_for_initialization.assert_awaited()
+
+        await watcher.unfocus(42)
+        assert 42 not in watcher.focused_node_ids
+        device.close.assert_called()
+
+
+@pytest.mark.asyncio
 async def test_device_loop_adds_remote_nodes(instant_sleep: None) -> None:
     client = _mock_client(node_id=1)
     client.node_tracker.registry = {42: _heartbeat_entry()}
 
     watcher = BusPublicationWatcher(client)
-    setup_calls: list[int] = []
-
-    async def _setup_device(state: DeviceWatchState) -> None:
-        setup_calls.append(state.node_id)
-        state.device_info["setup"] = True
-
-    watcher._setup_device = _setup_device  # type: ignore[method-assign]
 
     await _run_device_loop_once(watcher)
-    await _await_device_setup_tasks(watcher)
 
-    assert setup_calls == [42]
     assert 42 in watcher.devices
     assert watcher.devices[42].device_info["node_id"] == 42
     assert watcher.devices[42].device_info["uptime_s"] == 10
+    assert watcher.devices[42].subscriber_tasks == {}
     assert 1 not in watcher.devices
 
 
@@ -156,6 +195,64 @@ async def test_device_loop_refreshes_existing_node_metadata(instant_sleep: None)
 
 
 @pytest.mark.asyncio
+async def test_reconcile_does_not_bump_bus_activity_for_stale_heartbeat(instant_sleep: None) -> None:
+    """Frozen heartbeat metadata must not refresh last_bus_activity_unix."""
+    client = _mock_client(node_id=1)
+    entry = _heartbeat_entry(uptime=10, vssc=5)
+    client.node_tracker.registry = {42: entry}
+    watcher = BusPublicationWatcher(client)
+    watcher.last_bus_activity_unix = 1000.0
+    watcher.devices[42] = DeviceWatchState(
+        node_id=42,
+        device_info=BusPublicationWatcher._serialize_node_entry(42, entry),
+    )
+
+    with patch("cyphal_device_library.publication_watch.time.time", return_value=2000.0):
+        await _run_device_loop_once(watcher)
+
+    assert watcher.last_bus_activity_unix == 1000.0
+
+
+@pytest.mark.asyncio
+async def test_reconcile_bumps_bus_activity_when_heartbeat_changes(instant_sleep: None) -> None:
+    client = _mock_client(node_id=1)
+    client.node_tracker.registry = {42: _heartbeat_entry(uptime=10, vssc=5)}
+    watcher = BusPublicationWatcher(client)
+    watcher.last_bus_activity_unix = 1000.0
+    watcher.devices[42] = DeviceWatchState(
+        node_id=42,
+        device_info=BusPublicationWatcher._serialize_node_entry(42, _heartbeat_entry(uptime=10, vssc=5)),
+    )
+
+    client.node_tracker.registry[42] = _heartbeat_entry(uptime=11, vssc=5)
+    with patch("cyphal_device_library.publication_watch.time.time", return_value=2000.0):
+        await _run_device_loop_once(watcher)
+
+    assert watcher.last_bus_activity_unix == 2000.0
+
+
+@pytest.mark.asyncio
+async def test_record_message_bumps_bus_activity(instant_sleep: None) -> None:
+    client = _mock_client()
+    watcher = BusPublicationWatcher(client)
+    watcher.last_bus_activity_unix = 1000.0
+    state = DeviceWatchState(node_id=42, device_info={"node_id": 42})
+
+    with patch("cyphal_device_library.publication_watch.time.time", return_value=2000.0):
+        await watcher._record_message(
+            state=state,
+            port_name="status",
+            subject_id=6060,
+            type_name="uavcan.primitive.Empty.1.0",
+            fields={},
+            transfer_id=1,
+            parse_status="ok",
+        )
+
+    assert watcher.last_bus_activity_unix == 2000.0
+
+
+@pytest.mark.asyncio
 async def test_device_loop_registers_devices_before_setup_completes(instant_sleep: None) -> None:
     client = _mock_client(node_id=1)
     client.node_tracker.registry = {
@@ -179,11 +276,21 @@ async def test_device_loop_registers_devices_before_setup_completes(instant_slee
     assert 43 in watcher.devices
     assert watcher.devices[42].device_info["node_id"] == 42
     assert watcher.devices[43].device_info["node_id"] == 43
-    await _REAL_ASYNCIO_SLEEP(0)
+    assert setup_started == []
+
+    focus_tasks = [
+        asyncio.create_task(watcher.focus(42)),
+        asyncio.create_task(watcher.focus(43)),
+    ]
+    for _ in range(10):
+        await _REAL_ASYNCIO_SLEEP(0)
+        if sorted(setup_started) == [42, 43]:
+            break
+
     assert sorted(setup_started) == [42, 43]
 
     setup_release.set()
-    await _await_device_setup_tasks(watcher)
+    await asyncio.gather(*focus_tasks)
 
 
 @pytest.mark.asyncio
@@ -575,6 +682,72 @@ async def test_record_message_updates_stats_and_pending_queue() -> None:
     assert state.port_stats[6060].count == 3
 
 
+def test_build_status_payload_defaults_omit_registry_and_history() -> None:
+    client = _mock_client()
+    watcher = BusPublicationWatcher(client)
+    state = DeviceWatchState(node_id=7, device_info={"node_id": 7, "name": "x"})
+    state.registry_entries = [{"name": "uavcan.node.id", "dtype": "natural8", "value": 7}]
+    state.publications = {
+        "bms_data": PublicationPort(
+            port_name="bms_data",
+            subject_id=100,
+            type_name="x",
+            dt_ms=None,
+            parse_status="ok",
+            message_type=None,
+        )
+    }
+    watcher.devices[7] = state
+    watcher._pending_messages.append(
+        ParsedMessage(
+            node_id=7,
+            port_name="bms_data",
+            subject_id=100,
+            type_name="x",
+            timestamp_unix=1.0,
+            transfer_id=1,
+            fields={"a": 1},
+            sequence=1,
+        )
+    )
+
+    payload = watcher.build_status_payload()
+
+    assert "registry" not in payload["devices"][0]
+    assert "message_history" not in payload
+    assert len(payload["messages"]) == 1
+
+
+def test_build_focus_status_payload_includes_registry_and_node_history() -> None:
+    client = _mock_client()
+    watcher = BusPublicationWatcher(client, max_messages_per_port=3)
+    state = DeviceWatchState(node_id=7, device_info={"node_id": 7, "name": "x"})
+    state.registry_entries = [{"name": "uavcan.node.id", "dtype": "natural8", "value": 7}]
+    watcher.devices[7] = state
+    other = DeviceWatchState(node_id=8, device_info={"node_id": 8, "name": "y"})
+    watcher.devices[8] = other
+
+    for index, node_id in enumerate((7, 7, 8)):
+        asyncio.run(
+            watcher._record_message(
+                state=state if node_id == 7 else other,
+                port_name="temp_data",
+                subject_id=6061,
+                type_name="test.Type.1.0",
+                fields={"index": index},
+                transfer_id=index,
+                parse_status="ok",
+            )
+        )
+
+    payload = watcher.build_focus_status_payload(7)
+
+    assert payload["devices"][0]["registry"] == state.registry_entries
+    assert "message_history" in payload
+    assert all(item["node_id"] == 7 for item in payload["message_history"])
+    assert len(payload["messages"]) == 3
+
+
 def test_drain_pending_messages_and_build_status_payload() -> None:
     client = _mock_client()
     watcher = BusPublicationWatcher(client)
@@ -612,7 +785,7 @@ def test_drain_pending_messages_and_build_status_payload() -> None:
     assert payload["devices"][0]["node_id"] == 42
     assert payload["devices"][0]["publications"][0]["port_name"] == "status"
     assert payload["messages"][0]["port_name"] == "status"
-    assert payload["message_history"] == []
+    assert "message_history" not in payload
     assert payload["unknown_ports"][0]["node_id"] == 99
     assert payload["unknown_ports"][0]["subject_id"] == 8080
     assert payload["port_stats"][0]["count"] == 2
@@ -642,7 +815,7 @@ def test_build_status_payload_includes_per_subject_message_history() -> None:
             )
         )
 
-    payload = watcher.build_status_payload()
+    payload = watcher.build_status_payload(include_message_history=True)
     history = payload["message_history"]
     assert len(history) == 3
     assert [item["fields"]["index"] for item in history] == [1, 2, 3]

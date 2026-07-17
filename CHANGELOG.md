@@ -14,12 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * _Nothing yet._
 
+## [0.7.5] - 2026-07-17
+
+### Added
+
+* feat: presence-only publication watch with focus/unfocus. [PR #23](https://github.com/starcopter/cyphal-device-library/pull/23).
+
 ## [0.7.4] - 2026-07-10
 
 ### Added
 
 * python-can-remote added as CAN transport interface
-* dependecies include python-can-remote and python-can[multicast] now
+* dependencies include python-can-remote and python-can[multicast] now
 
 ## [0.7.3] - 2026-07-09
 
