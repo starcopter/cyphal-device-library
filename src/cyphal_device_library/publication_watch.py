@@ -359,9 +359,7 @@ class BusPublicationWatcher:
             if node_id in self.devices:
                 previous_info = self.devices[node_id].device_info
                 new_info = self._serialize_node_entry(node_id, entry)
-                if self._heartbeat_activity_signature(previous_info) != self._heartbeat_activity_signature(
-                    new_info
-                ):
+                if self._heartbeat_activity_signature(previous_info) != self._heartbeat_activity_signature(new_info):
                     self.last_bus_activity_unix = time.time()
                 self.devices[node_id].device_info = new_info
 
