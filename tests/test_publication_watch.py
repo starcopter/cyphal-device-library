@@ -916,3 +916,37 @@ def test_serialize_node_entry_without_info() -> None:
     assert payload["vssc"] == 9
     assert payload["vssc_hex"] == "0x09"
     assert payload["name"] is None
+
+
+@pytest.mark.asyncio
+async def test_unfocus_keeps_publications_and_registry() -> None:
+    client = _mock_client()
+    watcher = BusPublicationWatcher(client)
+    port = PublicationPort(
+        port_name="status",
+        subject_id=6060,
+        type_name="uavcan.primitive.Empty.1.0",
+        message_type=load_message_type("uavcan.primitive.Empty.1.0"),
+        parse_status="ok",
+    )
+    state = DeviceWatchState(
+        node_id=42,
+        device_info={"node_id": 42},
+        publications={"status": port},
+        registry_entries=[{"name": "uavcan.pub.status.id", "value": [6060]}],
+        known_subject_ids={6060},
+        port_stats={6060: PortStats()},
+    )
+    watcher.devices[42] = state
+    watcher._focused_node_ids.add(42)
+    watcher.unknown_ports[42] = {9999: PortStats()}
+
+    await watcher.unfocus(42)
+
+    assert 42 not in watcher.focused_node_ids
+    assert state.publications == {"status": port}
+    assert state.registry_entries == [{"name": "uavcan.pub.status.id", "value": [6060]}]
+    assert state.known_subject_ids == {6060}
+    assert state.port_stats == {}
+    assert 42 not in watcher.unknown_ports
+    assert state.subscriber_tasks == {}

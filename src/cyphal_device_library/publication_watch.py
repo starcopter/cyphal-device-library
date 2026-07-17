@@ -124,7 +124,9 @@ class BusPublicationWatcher:
     new remote node for **presence only** (heartbeat/name metadata in
     :attr:`devices`). Publication discovery and subscriptions start only after an
     explicit :meth:`focus` call. :meth:`unfocus` tears down subscribers and clears
-    publication-derived state while keeping the presence row.
+    live observation state (port stats, unknown ports, message history) while keeping
+    the publication catalog and registry entries. The presence row remains in
+    :attr:`devices`.
 
     For a focused node, setup:
 
@@ -388,11 +390,8 @@ class BusPublicationWatcher:
         if state is None:
             return
         await self._teardown_device(state)
-        # Keep presence row; clear publication-derived fields
-        state.publications.clear()
-        state.registry_entries = []
+        # Keep catalog/registry across unfocus; clear live observation only.
         state.port_stats.clear()
-        state.known_subject_ids.clear()
         self.unknown_ports.pop(node_id, None)
         self._drop_port_message_history(node_id)
         self._notify_state_changed()
