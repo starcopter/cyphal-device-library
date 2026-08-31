@@ -65,6 +65,7 @@ class Client:
             registry: Optional path to the registry directory.
             parallel_updates: Maximum number of parallel software updates allowed.
             logger: The logger to use for logging. Defaults to the logger for this module.
+            pnp_server: Whether to run a centralized PnP node-ID allocator.
         """
         self.uid = None
         node_info_attrs = {"name": name}

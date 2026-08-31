@@ -25,6 +25,8 @@ can_transport_bitrate = None
 def configure_logging(console: rich.console.Console | None = None, filename: Path | str | None = None):
     from rich.logging import RichHandler
 
+    from cyphal_device_library.util._logging import Errno105Filter
+
     root_logger = logging.getLogger()
     root_logger.setLevel("DEBUG")
     logging.getLogger("pycyphal").setLevel("INFO")
@@ -33,6 +35,7 @@ def configure_logging(console: rich.console.Console | None = None, filename: Pat
 
     rich_handler = RichHandler(console=console, rich_tracebacks=True, tracebacks_show_locals=True, show_path=False)
     rich_handler.setFormatter(logging.Formatter("%(name)-20s %(message)s", datefmt="[%X]"))
+    Errno105Filter.apply_to(rich_handler)
     root_logger.addHandler(rich_handler)
 
     if filename:
@@ -43,6 +46,7 @@ def configure_logging(console: rich.console.Console | None = None, filename: Pat
                 datefmt="%Y-%m-%d %H:%M:%S",
             )
         )
+        Errno105Filter.apply_to(file_handler)
         root_logger.addHandler(file_handler)
 
 
@@ -126,6 +130,10 @@ def make_can_transport(iface: str, bitrate: int | list[int], node_id: int) -> "C
 
     register_udp_multicast_constructor()
     register_can_remote_constructor()
+    if str(iface).lower().startswith("socketcan:"):
+        from cyphal_device_library.util.socketcan_enobufs import install_socketcan_enobufs_tolerance
+
+        install_socketcan_enobufs_tolerance()
 
     bitrate_list: list[int]
     if isinstance(bitrate, int) or (len(bitrate) == 2 and bitrate[0] == bitrate[1]):

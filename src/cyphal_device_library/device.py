@@ -107,9 +107,11 @@ class Device:
             try:
                 async with asyncio.TaskGroup() as tg:
                     tg.create_task(self.get_info())
-                    if isinstance(discover_registers, Iterable):
+                    if isinstance(discover_registers, Iterable) and not isinstance(discover_registers, (str, bytes)):
+                        # Missing names must not abort the group: callers often pass a
+                        # union of firmware-specific registers (only some exist on DUT).
                         for name in discover_registers:
-                            tg.create_task(self.registry.refresh_register(name, full=False))
+                            tg.create_task(self.registry.refresh_register(name, full=False, raise_on_error=False))
                     elif discover_registers:
                         tg.create_task(self.registry.discover_registers())
             except BaseException as exc:
@@ -416,8 +418,8 @@ class Device:
         """
         try:
             await self._ensure_registers(f"uavcan.pub.{port_name}.id", f"uavcan.pub.{port_name}.type")
-        except RuntimeError:
-            raise KeyError(f"Port '{port_name}' not found in registry of device with node ID {self.node_id}")
+        except RuntimeError as exc:
+            raise KeyError(f"Port '{port_name}' not found in registry of device with node ID {self.node_id}") from exc
 
         subscriber = self.get_subscription(port_name)
         if subscriber.dtype != expected_dtype:  # pragma: no cover

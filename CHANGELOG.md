@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * _Nothing yet._
 
+## [0.7.7] - 2026-08-31
+
+### Fixed
+
+* Treat SocketCAN ``ENOBUFS`` (errno 105) as a send timeout instead of a fatal publisher-task error.
+* Skip SocketCAN frames that pycyphal's ``_read_frame`` asserts as ``Unreachable`` (ignored RTR / unmapped error frames after a TX warning).
+* register discovery no longer raises on error as default.
+
 ## [0.7.6] - 2026-07-17
 
 ### Added

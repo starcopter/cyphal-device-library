@@ -47,13 +47,23 @@ def patch_log_levels_in_python_logging_module() -> None:
 
 
 class Errno105Filter(logging.Filter):
-    """Filter out log messages that contain '[Errno 105] No buffer space available.'
+    """Filter SocketCAN ENOBUFS records, including those that only carry it in ``exc_info``.
 
-    This can be used to suppress pycyphal errors that would otherwise spam the logs.
+    pycyphal logs this as ``publisher task exception`` with the OSError attached as
+    ``exc_info``, so matching ``record.getMessage()`` alone never suppresses it.
     """
 
+    _NEEDLE = "[Errno 105] No buffer space available"
+
     def filter(self, record: logging.LogRecord) -> bool:
-        return "[Errno 105] No buffer space available" not in record.getMessage()
+        try:
+            rendered_message = record.getMessage()
+        except Exception:  # pragma: no cover
+            rendered_message = str(record.msg)
+        if self._NEEDLE in rendered_message:
+            return False
+        exc = record.exc_info[1] if record.exc_info else None
+        return not (exc is not None and self._NEEDLE in f"{exc}")
 
     @staticmethod
     def apply_to(logger_or_handler: str | logging.Logger | logging.Handler) -> None:
