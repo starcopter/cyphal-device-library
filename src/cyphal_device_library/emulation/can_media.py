@@ -99,6 +99,9 @@ def create_can_media(
     if iface.lower().startswith("socketcan:"):
         from pycyphal.transport.can.media.socketcan import SocketCANMedia
 
+        from cyphal_device_library.util.socketcan_enobufs import install_socketcan_enobufs_tolerance
+
+        install_socketcan_enobufs_tolerance()
         return SocketCANMedia(iface.split(":", 1)[-1], mtu=resolved_mtu, disable_brs=br_arb == br_data)
     if iface.lower().startswith("candump:"):
         from pycyphal.transport.can.media.candump import CandumpMedia
