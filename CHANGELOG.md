@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+* _Nothing yet._
+
+## [0.7.7] - 2026-08-31
+
 ### Fixed
 
 * Treat SocketCAN ``ENOBUFS`` (errno 105) as a send timeout instead of a fatal publisher-task error.
