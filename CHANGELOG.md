@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * _Nothing yet._
 
+## [0.7.8] - 2026-09-01
+
+### Fixed
+
+* Serialize NaN / ±Inf floats as JSON strings ``"NAN"`` / ``"INF"`` / ``"-INF"`` so publication payloads stay valid JSON (motherboard humidity fields).
+
 ## [0.7.7] - 2026-08-31
 
 ### Fixed
