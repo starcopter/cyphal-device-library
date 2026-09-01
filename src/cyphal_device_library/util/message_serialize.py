@@ -2,10 +2,29 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import numpy as np
 import pycyphal.dsdl
+
+JSON_NAN = "NAN"
+JSON_POS_INF = "INF"
+JSON_NEG_INF = "-INF"
+
+
+def json_safe_number(value: float) -> float | str:
+    """Return a JSON number, or a string label for NaN / ±Inf.
+
+    Python ``json.dumps`` emits bare ``NaN`` / ``Infinity`` by default. Those
+    tokens are not valid JSON, so browsers reject the whole websocket payload.
+    """
+    numeric = float(value)
+    if math.isnan(numeric):
+        return JSON_NAN
+    if math.isinf(numeric):
+        return JSON_POS_INF if numeric > 0 else JSON_NEG_INF
+    return numeric
 
 
 def serialize_message(
@@ -23,8 +42,16 @@ def serialize_message(
     if message is None:
         return None
 
-    if isinstance(message, (bool, int, float)):
+    if isinstance(message, bool):
         return message
+    if isinstance(message, int):
+        return message
+    if isinstance(message, float):
+        return json_safe_number(message)
+    if isinstance(message, np.generic):
+        if isinstance(message, np.floating):
+            return json_safe_number(float(message))
+        return message.item()
 
     if isinstance(message, str):
         if len(message) > max_str:
@@ -104,8 +131,10 @@ def ensure_json_serializable(
     if _depth > max_depth:
         return "<max_depth>"
 
-    if value is None or isinstance(value, (bool, int, float, str)):
+    if value is None or isinstance(value, (bool, int, str)):
         return value
+    if isinstance(value, float):
+        return json_safe_number(value)
 
     if isinstance(value, dict):
         return {

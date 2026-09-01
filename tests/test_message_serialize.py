@@ -1,5 +1,7 @@
 """Tests for DSDL message serialization."""
 
+import json
+
 import numpy as np
 import uavcan.node
 import uavcan.primitive
@@ -12,6 +14,20 @@ def test_serialize_message_none_and_scalars() -> None:
     assert serialize_message(True) is True
     assert serialize_message(42) == 42
     assert serialize_message(3.14) == 3.14
+
+
+def test_serialize_message_nonfinite_floats_are_json_safe_labels() -> None:
+    assert serialize_message(float("nan")) == "NAN"
+    assert serialize_message(float("inf")) == "INF"
+    assert serialize_message(float("-inf")) == "-INF"
+    assert serialize_message(np.float32("nan")) == "NAN"
+    assert serialize_message(np.array([1.0, float("nan"), float("inf")])) == [1.0, "NAN", "INF"]
+
+    payload = ensure_json_serializable(
+        {"avg_humidity": float("nan"), "nested": [float("inf"), {"v": np.float64("nan")}]}
+    )
+    assert payload == {"avg_humidity": "NAN", "nested": ["INF", {"v": "NAN"}]}
+    json.dumps(payload, allow_nan=False)
 
 
 def test_serialize_message_string_truncation() -> None:
