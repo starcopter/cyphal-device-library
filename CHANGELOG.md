@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+* _Nothing yet._
+
+## [0.7.9] - 2026-09-18
+
+### Added
+
 * Emulated nodes auto-create Cyphal registers on ``uavcan.register.Access``: a first read returns empty string data, a first write stores the supplied value, and later accesses round-trip the stored data. Config register overrides now create names that were not in the profile defaults.
 
 ## [0.7.8] - 2026-09-01
