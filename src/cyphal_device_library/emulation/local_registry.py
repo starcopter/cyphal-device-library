@@ -72,8 +72,8 @@ def apply_native_register_overrides(
     """Apply JSON/native register overrides onto a local pycyphal node registry.
 
     Uses the same :data:`~cyphal_device_library.registry.NativeValue` types as
-    :class:`~cyphal_device_library.registry.Registry` client access. Registers that
-    are not already present in the local registry are skipped.
+    :class:`~cyphal_device_library.registry.Registry` client access. Names that are
+    not already present are created (type deduced from the native value).
 
     Args:
         registry: Local pycyphal node registry (after defaults are installed).
@@ -87,7 +87,10 @@ def apply_native_register_overrides(
         })
     """
     for name, value in overrides.items():
-        if name not in registry or value is None:
+        if value is None:
+            continue
+        if name not in registry:
+            registry[name] = value
             continue
         current = registry[name]
         # Match the existing register Value type rather than guessing from Python type alone.

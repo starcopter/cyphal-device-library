@@ -19,6 +19,7 @@ from .local_registry import (
     configure_can_registers,
     configure_standard_service_registers,
 )
+from .open_registry import install_auto_creating_register_access
 from .publication_spec import PublicationPortSpec
 
 # Fallback publication period when neither the register nor the spec declares one.
@@ -30,7 +31,9 @@ class EmulatedCyphalNode:
 
     Each node exposes the standard Cyphal services ``uavcan.node.GetInfo`` and
     ``uavcan.register`` (list/access) through :mod:`pycyphal`, using the local
-    register map declared by the device profile.
+    register map declared by the device profile. Unknown register names are
+    created on first Access: a read returns empty string data, a write stores
+    the supplied value.
 
     Pass a pre-built :class:`~pycyphal.transport.can.CANTransport` when several
     emulated devices share one CAN interface.
@@ -90,8 +93,9 @@ class EmulatedCyphalNode:
         return Natural16([self.node_id])
 
     def start(self) -> None:
-        """Start the node transport and generic publication loops."""
+        """Start the node transport, open register Access, and generic publication loops."""
         self.node.start()
+        install_auto_creating_register_access(self.node)
         self._background_tasks = self._start_publication_loops()
 
     async def stop(self) -> None:
