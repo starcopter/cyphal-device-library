@@ -9,12 +9,18 @@ import typer
 from dotenv import load_dotenv
 
 from ..util._logging import UAVCAN_SEVERITY_TO_PYTHON, Errno105Filter, UAVCANDiagnosticSeverity
-from ..util.dsdl import get_output_directory
+from ..util.dsdl import dsdl_updates_disabled, ensure_dsdl_compiled, get_output_directory
 from . import dsdl
 from ._util import configure_logging, set_default_usbtingo_env_vars
 
 app = typer.Typer()
 app.add_typer(dsdl.app)
+
+if not dsdl_updates_disabled():
+    try:
+        ensure_dsdl_compiled()
+    except Exception:
+        logging.getLogger(__name__).exception("Failed to update Cyphal DSDL definitions")
 
 
 try:
