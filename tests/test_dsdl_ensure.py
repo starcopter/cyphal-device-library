@@ -10,6 +10,7 @@ from urllib.error import URLError
 
 import pytest
 
+_PREVIOUS_DOWNLOAD_FLAG = os.environ.get("CYPHAL_DEVICE_LIBRARY_NO_DSDL_DOWNLOAD")
 os.environ["CYPHAL_DEVICE_LIBRARY_NO_DSDL_DOWNLOAD"] = "1"
 
 from cyphal_device_library.util.dsdl import (  # noqa: E402
@@ -17,6 +18,31 @@ from cyphal_device_library.util.dsdl import (  # noqa: E402
     ensure_dsdl_compiled,
     get_shared_compiled_directory,
 )
+
+
+def _restore_env(name: str, previous: str | None) -> None:
+    if previous is None:
+        os.environ.pop(name, None)
+    else:
+        os.environ[name] = previous
+
+
+@pytest.fixture(autouse=True)
+def _restore_import_state(monkeypatch: pytest.MonkeyPatch):
+    """Keep a stub DSDL compile from replacing the real ``starcopter`` package."""
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    cyphal_path = os.environ.get("CYPHAL_PATH")
+    pycyphal_path = os.environ.get("PYCYPHAL_PATH")
+    yield
+    _restore_env("CYPHAL_PATH", cyphal_path)
+    _restore_env("PYCYPHAL_PATH", pycyphal_path)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _restore_download_flag():
+    """Do not leave the download opt-out set for later test modules."""
+    yield
+    _restore_env("CYPHAL_DEVICE_LIBRARY_NO_DSDL_DOWNLOAD", _PREVIOUS_DOWNLOAD_FLAG)
 
 
 def _repo() -> DSDLRepository:
