@@ -18,7 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-* _Nothing yet._
+* `ensure_dsdl_compiled` keeps one compiled DSDL tree in `PYCYPHAL_PATH`, `~/.pycyphal`, or `~/.cache/pycyphal` when that directory is not writable. `cyphal` runs it on startup. `cyphal install` refreshes that shared tree and still compiles into the current interpreter's site-packages. `--force` re-downloads and recompiles even when the archive identity is unchanged.
+
+### Fixed
+
+* DSDL namespaces are fetched and recompiled when the GitHub archive identity changes, instead of being skipped forever once `__init__.py` exists. A matching `.cyphal-dsdl-stamp.json` only performs an HTTP HEAD check. `CYPHAL_DEVICE_LIBRARY_NO_DSDL_DOWNLOAD=1` skips the automatic refresh.
 
 ## [0.7.9] - 2026-09-18
 
